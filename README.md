@@ -1,112 +1,89 @@
 # odoo-trace-kit
 
-Interactive Playwright trace recorder for Odoo manual testing.  
-Record a click-through session, then replay it step-by-step in the Playwright Trace Viewer — with screenshots and DOM snapshots at every action.
+Record Odoo UI flows as Playwright traces — for visual manual testing and review.
 
-Works with **Odoo 14, 17, 18+** (and any version in between).
+Traces are self-contained `.zip` files. Open them in the Playwright Trace Viewer to step through every action with screenshots, DOM snapshots, and network logs — no Odoo access needed.
 
 ---
 
-## Quick start
+## Install
 
 ```bash
-# 1. Install
 git clone <this-repo>
 cd odoo-trace-kit
 npm install
 npx playwright install chromium
+```
 
-# 2. Run interactively
+Requires Node.js 18+. Works on Linux, macOS, Windows (WSL).
+
+---
+
+## Usage
+
+```bash
+# Interactive — type commands manually
 ./trace.sh MY-TASK http://your-odoo:8069/web/login
 
-# 3. Or pipe a pre-written flow
-./trace.sh SO-FLOW http://your-odoo:8069/web/login < flows/so-invoice-payment.txt
-
-# 4. View the trace (on any machine with Node.js)
-npx playwright show-trace traces/MY-TASK.zip
-# or drag-drop to https://trace.playwright.dev
+# Automated — pipe a flow script
+./trace.sh MY-TASK http://your-odoo:8069/web/login < flows/my-flow.txt
 ```
+
+Trace saved to `traces/MY-TASK.zip`.
+
+---
+
+## View a trace
+
+```bash
+npx playwright show-trace traces/MY-TASK.zip
+```
+
+Or drag-drop `MY-TASK.zip` to **https://trace.playwright.dev** — zero install.
+
+---
+
+## Set up for your environment
+
+Every Odoo instance is different — different version, database, action IDs, button names.
+
+**If you have an AI assistant (Claude Code, Cursor, Copilot):**  
+Open this repo and ask it to help you set up. It will read `CLAUDE.md` and guide you through discovering your environment and generating a flow file.
+
+**Manually:**  
+See the commands reference below, then write a `flows/my-flow.txt`.
 
 ---
 
 ## Commands
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `goto <url>` | Navigate to URL |
-| `click <sel>` | Standard click — waits for element to be visible |
-| `fclick <sel>` | Force click — bypasses visibility/stability checks |
-| `jclick <sel>` | JS `.click()` — use for SPA New/list buttons |
-| `fill <sel> <text>` | Fill an input. Wrap multi-word selectors in `'single quotes'` |
-| `press <key>` | Keyboard: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp` |
-| `wait <ms>` | Pause (e.g. `wait 3000`) |
-| `screenshot [name]` | Save a PNG to `traces/` |
-| `snapshot` | Print visible elements tree (for selector discovery) |
-| `eval <js>` | Run JS and print result |
-| `find <sel>` | Print up to 5 matching elements with class and text |
-| `waitfor <sel>` | Wait until selector appears (max 15s) |
-| `url` | Print current URL |
-| `title` | Print page title |
-| `done` | Stop recording, save trace zip, exit |
+| `goto <url>` | Navigate |
+| `click <sel>` | Click — waits for visibility |
+| `fclick <sel>` | Force click — skips visibility check |
+| `jclick <sel>` | JS click — for Odoo SPA list buttons |
+| `fill <sel> <text>` | Fill input. Wrap multi-word selectors in `'single quotes'` |
+| `press <key>` | Keyboard: `Enter` `Tab` `Escape` `ArrowDown` |
+| `wait <ms>` | Pause |
+| `screenshot [name]` | Save PNG to `traces/` |
+| `snapshot` | Print visible element tree (selector discovery) |
+| `eval <js>` | Run JS, print result |
+| `find <sel>` | Print up to 5 matching elements |
+| `waitfor <sel>` | Wait up to 15s for selector to appear |
+| `url` / `title` | Print current URL or page title |
+| `done` | Stop recording, save zip |
 
-Lines starting with `#` are comments and are skipped.
-
----
-
-## Selector tips
-
-### Autocomplete fields (Many2one)
-```
-fill input.o-autocomplete--input SearchTerm
-wait 2000
-click .o-autocomplete--dropdown-item   # picks the first result
-```
-To be precise: search by internal reference (e.g. `[EXP_GEN]`) instead of display name.
-
-### Multi-word CSS selectors
-```
-fill 'td[name="product_template_id"] input' SearchTerm
-```
-Wrap in single quotes — the parser treats everything inside `'...'` as one token.
-
-### Discover button names on any page
-```
-eval Array.from(document.querySelectorAll('button[name]')).map(b => b.name + '=' + b.textContent.trim().slice(0,25))
-```
+Lines starting with `#` are ignored.
 
 ---
 
-## Odoo version differences
+## Share a trace
 
-See [docs/odoo-versions.md](docs/odoo-versions.md) for version-specific selectors and URL patterns.
-
----
-
-## Viewing traces
-
-**On Mac/Windows (no Odoo needed):**
+Pull the zip to your local machine:
 ```bash
-npm install -g playwright   # one-time
-scp user@odoo-server:/path/to/traces/MY-TASK.zip .
+scp user@server:/path/to/odoo-trace-kit/traces/MY-TASK.zip .
 npx playwright show-trace MY-TASK.zip
 ```
 
-Or drag-drop `MY-TASK.zip` to **https://trace.playwright.dev** — no install required.
-
----
-
-## Directory layout
-
-```
-odoo-trace-kit/
-├── pw_trace.js          # main REPL script
-├── trace.sh             # convenience wrapper
-├── package.json
-├── flows/               # reusable command scripts
-│   ├── so-invoice-payment.txt
-│   └── login-only.txt
-├── docs/
-│   ├── odoo-versions.md
-│   └── commands.md
-└── traces/              # output zips (git-ignored)
-```
+Or upload the `.zip` to a shared drive and teammates open it at https://trace.playwright.dev.

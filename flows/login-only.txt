@@ -1,13 +1,13 @@
-# Minimal smoke test — just login and take a screenshot
-# Usage: ./trace.sh SMOKE http://your-odoo:8069/web/login < flows/login-only.txt
+# Smoke test — just verify login works and take a screenshot.
+# Replace <PLACEHOLDERS> before running.
+#
+# Usage:
+#   ./trace.sh SMOKE http://<ODOO_HOST>:8069/web/login < flows/login-only.txt
 
-goto http://your-odoo:8069/web/login
-wait 1000
-fill input#login admin
-fill input#password admin
+fill input#login <ADMIN_USER>
+fill input#password <ADMIN_PASS>
 press Enter
 wait 6000
-screenshot
 url
-title
+screenshot
 done
