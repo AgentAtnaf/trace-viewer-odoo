@@ -23,23 +23,23 @@ Requires Node.js 18+. Works on Linux, macOS, Windows (WSL).
 
 ```bash
 # Interactive — type commands manually
-./trace.sh MY-TASK http://your-odoo:8069/web/login
+./trace.sh so-flow http://your-odoo:8069/web/login
 
 # Automated — pipe a flow script
-./trace.sh MY-TASK http://your-odoo:8069/web/login < flows/my-flow.txt
+./trace.sh so-flow http://your-odoo:8069/web/login < flows/so-invoice-payment.txt
 ```
 
-Trace saved to `traces/MY-TASK.zip`.
+Trace saved to `traces/so-flow.zip`.
 
 ---
 
 ## View a trace
 
 ```bash
-npx playwright show-trace traces/MY-TASK.zip
+npx playwright show-trace traces/demo.zip
 ```
 
-Or drag-drop `MY-TASK.zip` to **https://trace.playwright.dev** — zero install.
+Or drag-drop `demo.zip` to **https://trace.playwright.dev** — zero install.
 
 ---
 
@@ -82,8 +82,8 @@ Lines starting with `#` are ignored.
 
 Pull the zip to your local machine:
 ```bash
-scp user@server:/path/to/odoo-trace-kit/traces/MY-TASK.zip .
-npx playwright show-trace MY-TASK.zip
+scp user@server:/path/to/odoo-trace-kit/traces/demo.zip .
+npx playwright show-trace demo.zip
 ```
 
 Or upload the `.zip` to a shared drive and teammates open it at https://trace.playwright.dev.

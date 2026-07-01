@@ -2,24 +2,24 @@
 # trace.sh — run an interactive or piped trace session
 #
 # Usage:
-#   ./trace.sh <task_label> [target_url]           # interactive REPL
-#   ./trace.sh <task_label> [target_url] < flow.txt  # pipe commands
+#   ./trace.sh <name> [target_url]           # interactive REPL
+#   ./trace.sh <name> [target_url] < flow.txt  # pipe commands
 #
 # Examples:
-#   ./trace.sh DEMO http://localhost:8069/web/login
-#   ./trace.sh SO-FLOW http://192.168.64.3:8069/web/login < flows/so-invoice-payment.txt
+#   ./trace.sh demo http://localhost:8069/web/login
+#   ./trace.sh so-flow http://192.168.1.10:8069/web/login < flows/so-invoice-payment.txt
 #
-# Output: traces/<task_label>.zip
-# View:   npx playwright show-trace traces/<task_label>.zip
+# Output: traces/<name>.zip
+# View:   npx playwright show-trace traces/<name>.zip
 
 set -euo pipefail
 
-TASK_LABEL="${1:-}"
+NAME="${1:-}"
 TARGET_URL="${2:-http://localhost:8069/web/login}"
 
-if [[ -z "$TASK_LABEL" ]]; then
-  echo "ERROR: task label required"
-  echo "Usage: $0 <task_label> [target_url]"
+if [[ -z "$NAME" ]]; then
+  echo "ERROR: name required"
+  echo "Usage: $0 <name> [target_url]"
   exit 1
 fi
 
@@ -34,4 +34,4 @@ fi
 : "${PLAYWRIGHT_BROWSERS_PATH:=${HOME}/.cache/ms-playwright}"
 export PLAYWRIGHT_BROWSERS_PATH
 
-exec node "$SCRIPT_DIR/pw_trace.js" "$TASK_LABEL" "$TARGET_URL"
+exec node "$SCRIPT_DIR/pw_trace.js" "$NAME" "$TARGET_URL"

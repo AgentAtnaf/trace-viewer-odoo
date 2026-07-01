@@ -2,15 +2,15 @@
 // pw_trace.js — Interactive Playwright trace REPL for Odoo visual testing
 //
 // Usage:
-//   node pw_trace.js <task_label> [target_url]
-//   node pw_trace.js DEMO http://localhost:8069/web/login
-//   node pw_trace.js TASK-001 http://192.168.1.10:8069/web/login
+//   node pw_trace.js <name> [target_url]
+//   node pw_trace.js demo http://localhost:8069/web/login
+//   node pw_trace.js so-flow http://192.168.1.10:8069/web/login
 //
 // Then type commands line-by-line (or pipe a command file):
-//   node pw_trace.js DEMO < flows/so-invoice-payment.txt
+//   node pw_trace.js so-flow http://localhost:8069/web/login < flows/so-invoice-payment.txt
 //
-// Trace saved to ./traces/<task_label>.zip
-// View:  npx playwright show-trace traces/<task_label>.zip
+// Trace saved to ./traces/<name>.zip
+// View:  npx playwright show-trace traces/<name>.zip
 //        or drag-drop to https://trace.playwright.dev
 
 const { chromium } = require('playwright');
@@ -18,11 +18,11 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 
-const taskLabel = process.argv[2];
+const label = process.argv[2];
 const targetUrl = process.argv[3] || 'http://localhost:8069/web/login';
 
-if (!taskLabel) {
-  console.error('Usage: node pw_trace.js <task_label> [target_url]');
+if (!label) {
+  console.error('Usage: node pw_trace.js <name> [target_url]');
   console.error('Example: node pw_trace.js DEMO http://localhost:8069/web/login');
   process.exit(1);
 }
@@ -30,10 +30,10 @@ if (!taskLabel) {
 const tracesDir = path.join(__dirname, 'traces');
 if (!fs.existsSync(tracesDir)) fs.mkdirSync(tracesDir, { recursive: true });
 
-const traceFile = path.join(tracesDir, `${taskLabel}.zip`);
+const traceFile = path.join(tracesDir, `${label}.zip`);
 
 (async () => {
-  console.log(`\nStarting trace: ${taskLabel}`);
+  console.log(`\nStarting trace: ${label}`);
   console.log(`Target:  ${targetUrl}`);
   console.log(`Output:  ${traceFile}`);
 
@@ -135,7 +135,7 @@ const traceFile = path.join(tracesDir, `${taskLabel}.zip`);
         console.log(`  waited ${ms}ms`);
 
       } else if (cmd === 'screenshot') {
-        const imgName = parts[1] || `${taskLabel}-${Date.now()}`;
+        const imgName = parts[1] || `${label}-${Date.now()}`;
         const imgPath = path.join(tracesDir, imgName.endsWith('.png') ? imgName : `${imgName}.png`);
         await page.screenshot({ path: imgPath, fullPage: true });
         console.log(`  screenshot: ${imgPath}`);
