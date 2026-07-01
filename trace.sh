@@ -25,12 +25,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Support globally-installed playwright or local node_modules
-if [[ -d "$SCRIPT_DIR/node_modules" ]]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$SCRIPT_DIR/node_modules/.cache/ms-playwright"
-else
+# Use local node_modules if present (preferred), else fall back to global
+if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
   export NODE_PATH="$(npm root -g 2>/dev/null || true)"
-  export PLAYWRIGHT_BROWSERS_PATH="${HOME}/.cache/ms-playwright"
 fi
+# Playwright looks for browsers in ~/.cache/ms-playwright by default;
+# override only if a custom path is set in the environment
+: "${PLAYWRIGHT_BROWSERS_PATH:=${HOME}/.cache/ms-playwright}"
+export PLAYWRIGHT_BROWSERS_PATH
 
 exec node "$SCRIPT_DIR/pw_trace.js" "$TASK_LABEL" "$TARGET_URL"
