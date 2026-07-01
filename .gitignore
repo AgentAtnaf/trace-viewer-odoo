@@ -1,5 +1,6 @@
 node_modules/
-traces/
+traces/*
+!traces/.gitkeep
 *.zip
 *.png
 config.json
