@@ -1,0 +1,99 @@
+# SO → Invoice → Payment flow
+# Tested on: Odoo 17 / dv_ryt_stg_test
+# DB: dv_ryt_stg_test  URL: http://localhost:8069
+#
+# Usage:
+#   ./trace.sh SO-FLOW http://localhost:8069/web/login < flows/so-invoice-payment.txt
+#
+# Required: admin user + at least one customer and one saleable product
+# -----------------------------------------------------------------------
+
+# --- LOGIN ---
+goto http://localhost:8069/web/login
+wait 1000
+fill input#login admin
+fill input#password admin
+press Enter
+wait 6000
+
+# --- NAVIGATE TO QUOTATIONS ---
+# Replace 321 with the action ID for Quotations in your DB
+# Find it: Settings > Technical > Actions > Window Actions, filter by model=sale.order
+goto http://localhost:8069/web#action=321
+wait 8000
+
+# --- NEW QUOTATION ---
+jclick button.o_list_button_add
+wait 5000
+
+# --- SET CUSTOMER ---
+fill input.o-autocomplete--input YourCustomer
+wait 2000
+click .o-autocomplete--dropdown-item
+wait 2000
+screenshot
+
+# --- ADD PRODUCT LINE ---
+# "Add a product" is the link text in Odoo 17; Odoo 14 uses "Add a line"
+click text=Add a product
+wait 2000
+
+# Search by internal reference (e.g. EXP_GEN) for exact match
+# Or type a partial name — first dropdown item is selected
+fill 'td[name="product_template_id"] input' EXP_GEN
+wait 2500
+click .o-autocomplete--dropdown-item
+wait 2000
+
+# Optional: change quantity
+fill 'td[name="product_uom_qty"] input' 10
+wait 1000
+press Tab
+wait 2000
+screenshot
+
+# Commit the line
+press Escape
+wait 2000
+screenshot
+
+# --- CONFIRM SALE ORDER ---
+# Odoo 17 RTI custom: button name = action_sale_ok
+# Standard Odoo 17:   button name = action_confirm
+fclick button[name="action_sale_ok"]
+wait 8000
+screenshot
+
+# Inspect available buttons on confirmed SO (uncomment to debug):
+# eval Array.from(document.querySelectorAll('button[name]')).map(b => b.name + '=' + b.textContent.trim().slice(0,20))
+
+# --- CREATE INVOICE ---
+# The "Create Invoice" button often has a numeric name (the action ID).
+# Find it with: eval Array.from(document.querySelectorAll('button[name]')).map(b => b.name + '=' + b.textContent.trim().slice(0,20))
+fclick button[name="319"]
+wait 4000
+screenshot
+
+# --- CONFIRM CREATE INVOICE WIZARD ---
+click button[name="create_invoices"]
+wait 7000
+screenshot
+url
+
+# --- CONFIRM (POST) INVOICE ---
+fclick button[name="action_post"]
+wait 7000
+screenshot
+
+# --- REGISTER PAYMENT ---
+fclick button[name="action_register_payment"]
+wait 5000
+screenshot
+
+# --- CREATE PAYMENT ---
+fclick button[name="action_create_payments"]
+wait 6000
+screenshot
+url
+
+done

@@ -1,0 +1,6 @@
+node_modules/
+traces/
+*.zip
+*.png
+config.json
+.env
