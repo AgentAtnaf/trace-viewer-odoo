@@ -54,6 +54,9 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log('  fclick <sel>             force click (bypasses visibility checks)');
   console.log('  jclick <sel>             JS .click() (OWL2-friendly for Odoo SPA buttons)');
   console.log('  fill <sel> <text>        fill input (use single quotes for selectors with spaces)');
+  console.log('  type <text>              type text into focused element (keyboard events, no selector)');
+  console.log('  m2o <cell_sel> <text>    many2one: click cell → type → pick first dropdown result');
+  console.log('  addline <field_name>     add row to One2many list, waits for new row to appear');
   console.log('  press <key>              keyboard press (Enter, Tab, Escape, ArrowDown...)');
   console.log('  wait <ms>                pause');
   console.log('  screenshot [name]        save screenshot to traces/');
@@ -124,6 +127,36 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         const text = parts.slice(2).join(' ');
         await page.fill(sel, text);
         console.log(`  filled: ${sel} = "${text}"`);
+
+      } else if (cmd === 'type') {
+        // Type text into the currently-focused element via keyboard events (no selector needed)
+        const text = parts.slice(1).join(' ');
+        await page.keyboard.type(text, { delay: 50 });
+        console.log(`  typed: "${text}"`);
+
+      } else if (cmd === 'm2o') {
+        // Many2one field helper: click cell → type search → wait for dropdown → pick first result
+        // Fixes fill() failing on role="combobox" inputs in OWL editable tree rows
+        const cellSel = parts[1];
+        const searchText = parts.slice(2).join(' ');
+        await page.click(cellSel, { timeout: 10000 });
+        await page.keyboard.type(searchText, { delay: 50 });
+        await page.waitForSelector('.o-autocomplete--dropdown-item', { timeout: 10000 });
+        await page.click('.o-autocomplete--dropdown-item');
+        console.log(`  m2o: ${cellSel} = "${searchText}"`);
+
+      } else if (cmd === 'addline') {
+        // Add a row to a One2many list: jclick the "Add a line/product" link → wait for new row
+        // Usage: addline <field_name>   e.g.  addline order_line
+        const fieldName = parts[1];
+        const found = await page.evaluate((f) => {
+          const el = document.querySelector(`[name="${f}"] a`);
+          if (!el) return false;
+          el.click();
+          return true;
+        }, fieldName);
+        await page.waitForSelector('tr.o_selected_row', { timeout: 10000 });
+        console.log(`  addline (${found ? 'found' : 'NOT FOUND link'}): [name="${fieldName}"]`);
 
       } else if (cmd === 'press') {
         await page.keyboard.press(parts[1]);

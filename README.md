@@ -64,6 +64,9 @@ See the commands reference below, then write a `flows/my-flow.txt`.
 | `fclick <sel>` | Force click — skips visibility check |
 | `jclick <sel>` | JS click — for Odoo SPA list buttons |
 | `fill <sel> <text>` | Fill input. Wrap multi-word selectors in `'single quotes'` |
+| `type <text>` | Type into focused element (no selector — use after clicking a combobox) |
+| `m2o <cell_sel> <text>` | Many2one: click cell → type → pick first dropdown (use instead of `fill` on OWL combobox cells) |
+| `addline <field_name>` | Add a row to a One2many list (e.g. `addline order_line`), waits for row to appear |
 | `press <key>` | Keyboard: `Enter` `Tab` `Escape` `ArrowDown` |
 | `wait <ms>` | Pause |
 | `screenshot [name]` | Save PNG to `traces/` |
