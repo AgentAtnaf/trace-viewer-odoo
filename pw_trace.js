@@ -62,6 +62,7 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log('  screenshot [name]        save screenshot to traces/');
   console.log('  snapshot                 print page element tree (for selector discovery)');
   console.log('  eval <js>                evaluate JS and print result');
+  console.log('  evals <sel>              print outerHTML of matched elements (structure inspection)');
   console.log('  find <sel>               print matching elements (max 5)');
   console.log('  waitfor <sel>            wait for selector to appear');
   console.log('  url                      print current URL');
@@ -99,14 +100,22 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         console.log(`  → ${page.url()}`);
 
       } else if (cmd === 'click') {
-        await page.click(rawRest, { timeout: 30000 });
+        await page.click(rawRest, { timeout: 30000 }).catch(async (e) => {
+          const count = await page.evaluate((s) => document.querySelectorAll(s).length, rawRest).catch(() => -1);
+          const hint = count === 0 ? 'selector matched 0 elements' : `selector matched ${count} element(s) but was not actionable`;
+          throw new Error(`${e.message.split('\n')[0]} — ${hint}`);
+        });
         await page.waitForLoadState('domcontentloaded').catch(() => {});
         console.log(`  clicked: ${rawRest}`);
 
       } else if (cmd === 'fclick') {
         // Force click — bypasses Playwright visibility/stability checks
         // Good for: SPA buttons that Playwright thinks aren't actionable
-        await page.click(rawRest, { force: true, timeout: 15000 });
+        await page.click(rawRest, { force: true, timeout: 15000 }).catch(async (e) => {
+          const count = await page.evaluate((s) => document.querySelectorAll(s).length, rawRest).catch(() => -1);
+          const hint = count === 0 ? 'selector matched 0 elements' : `selector matched ${count} element(s) but was not actionable`;
+          throw new Error(`${e.message.split('\n')[0]} — ${hint}`);
+        });
         await page.waitForLoadState('domcontentloaded').catch(() => {});
         console.log(`  fclicked: ${rawRest}`);
 
@@ -190,6 +199,17 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
       } else if (cmd === 'eval') {
         const result = await page.evaluate(new Function(`return (${rawRest})`));
         console.log(`  eval: ${JSON.stringify(result)}`);
+
+      } else if (cmd === 'evals') {
+        // Print outerHTML (first 300 chars) of each matched element — instant structure inspection
+        const sel = rawRest;
+        const results = await page.evaluate((s) => {
+          return Array.from(document.querySelectorAll(s)).slice(0, 5).map(e =>
+            e.outerHTML.slice(0, 300)
+          );
+        }, sel);
+        if (results.length === 0) console.log(`  (no matches for: ${sel})`);
+        results.forEach((r, i) => console.log(`  [${i}] ${r}`));
 
       } else if (cmd === 'find') {
         const sel = rawRest;

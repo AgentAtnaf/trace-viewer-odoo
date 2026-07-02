@@ -72,6 +72,7 @@ See the commands reference below, then write a `flows/my-flow.txt`.
 | `screenshot [name]` | Save PNG to `traces/` |
 | `snapshot` | Print visible element tree (selector discovery) |
 | `eval <js>` | Run JS, print result |
+| `evals <sel>` | Print outerHTML of matched elements (structure inspection) |
 | `find <sel>` | Print up to 5 matching elements |
 | `waitfor <sel>` | Wait up to 15s for selector to appear |
 | `url` / `title` | Print current URL or page title |

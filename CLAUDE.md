@@ -100,6 +100,36 @@ eval document.querySelector('td[name]')?.getAttribute('name')
 | Confirm SO | `button[name="action_confirm"]` | `button[name="action_confirm"]` or custom | check with eval |
 | Confirm invoice | `button[name="action_post"]` | `button[name="action_post"]` | same |
 | Login quirk | clean form | website module may overlay | same |
+| One2many td cells | no `name` attr — use `td:nth-child(N)` | `td[name="field"]` | same as 17 |
+| `data-id` on rows | client-side counter e.g. `product_3` — NOT the DB id | DB id integer | DB id integer |
+
+---
+
+## Odoo 14 — known gotchas
+
+### One2many td cells have no `name` attribute
+In Odoo 14 wizard/dialog list views, `<td>` cells are **not** annotated with `name`.
+Use positional selectors instead:
+```
+evals tr.o_selected_row td          # see all cells in the new row
+click tr.o_selected_row td:nth-child(2)   # click the 2nd cell
+m2o 'tr.o_selected_row td:nth-child(2)' SearchText
+```
+
+### `data-id` is a client-side counter, not the DB id
+`tr[data-id="product_3"]` — the `3` is a client-side sequence number, not the database record id.
+Do not use `data-id` to look up records. Use `eval` to read field values from the OWL component instead.
+
+### "Search More" dialog does not inherit autocomplete text
+When you click "Search More..." from a dropdown, the dialog opens **empty** — it does NOT pre-fill with what you already typed.
+You must re-type the search term inside the dialog:
+```
+click .o_m2o_dropdown_option_search_more   # or "Search More..." link
+wait 2000
+fill .modal input.o_searchview_input SearchTerm
+press Enter
+wait 2000
+```
 
 ---
 
@@ -138,9 +168,10 @@ Then run:
 ## Debugging tips
 
 **Element not found / timeout:**
+- Use `evals <sel>` to print outerHTML of matched elements — reveals actual structure in one shot
 - Use `snapshot` to print the visible element tree
-- Use `eval document.querySelector('YOUR_SEL')?.outerHTML?.slice(0,200)` to check if it exists
 - Use `find button` to list all buttons on the page
+- `click`/`fclick` timeouts now report whether the selector matched 0 elements vs existed but wasn't actionable
 
 **Click fires but nothing happens:**
 - Try `fclick` instead of `click` (bypasses visibility checks)
