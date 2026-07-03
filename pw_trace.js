@@ -27,7 +27,7 @@ if (!label) {
   process.exit(1);
 }
 
-const tracesDir = process.env.TRACE_OUT_DIR || path.join(__dirname, 'traces');
+const tracesDir = path.join(__dirname, 'traces');
 if (!fs.existsSync(tracesDir)) fs.mkdirSync(tracesDir, { recursive: true });
 
 const traceFile = path.join(tracesDir, `${label}.zip`);
