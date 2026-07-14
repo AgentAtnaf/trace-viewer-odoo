@@ -12,46 +12,46 @@
 fill input#login <ADMIN_USER>
 fill input#password <ADMIN_PASS>
 press Enter
-wait 6000
+waitidle
 screenshot
 
 # --- OPEN QUOTATIONS LIST ---
 # Replace <QUOTATIONS_ACTION_ID> with the action ID from your DB.
 # Discover with: SELECT id, name FROM ir_act_window WHERE res_model='sale.order';
 goto http://<ODOO_HOST>:8069/web#action=<QUOTATIONS_ACTION_ID>
-wait 8000
+waitidle
 screenshot
 
 # --- NEW QUOTATION ---
 jclick button.o_list_button_add
-wait 5000
+waitidle
 
 # --- SET CUSTOMER ---
 fill input.o-autocomplete--input <CUSTOMER_NAME>
-wait 2000
+waitfor .o-autocomplete--dropdown-item
 click .o-autocomplete--dropdown-item
-wait 2000
+waitidle
 screenshot
 
 # --- ADD PRODUCT ---
 # Odoo 17/18: "Add a product"  |  Odoo 14/15: "Add a line"
 click text=Add a product
-wait 2000
+waitidle
 
 # Search by internal reference for exact match, or use a unique partial name.
 fill 'td[name="product_template_id"] input' <PRODUCT_SEARCH>
 # Odoo 14: fill 'td[name="product_id"] input' <PRODUCT_SEARCH>
-wait 2500
+waitfor .o-autocomplete--dropdown-item
 click .o-autocomplete--dropdown-item
-wait 2000
+waitidle
 
 # Optional: set quantity
 # fill 'td[name="product_uom_qty"] input' 1
 # press Tab
-# wait 1000
+# waitidle
 
 press Escape
-wait 2000
+waitidle
 screenshot
 
 # --- CONFIRM SALE ORDER ---
@@ -59,35 +59,35 @@ screenshot
 # Some custom modules use: button[name="action_sale_ok"]
 # Discover with: eval Array.from(document.querySelectorAll('button[name]')).map(b=>b.name+'='+b.textContent.trim().slice(0,20))
 fclick button[name="action_confirm"]
-wait 8000
+waitidle
 screenshot
 
 # --- CREATE INVOICE ---
 # The "Create Invoice" button usually has a numeric name (the action ID).
 # Discover with the eval above after confirming the SO.
 fclick button[name="<CREATE_INVOICE_BUTTON_NAME>"]
-wait 4000
+waitidle
 screenshot
 
 # --- CONFIRM CREATE INVOICE WIZARD ---
 click button[name="create_invoices"]
-wait 7000
+waitidle
 screenshot
 url
 
 # --- CONFIRM (POST) INVOICE ---
 fclick button[name="action_post"]
-wait 7000
+waitidle
 screenshot
 
 # --- REGISTER PAYMENT ---
 fclick button[name="action_register_payment"]
-wait 5000
+waitidle
 screenshot
 
 # --- CREATE PAYMENT ---
 fclick button[name="action_create_payments"]
-wait 6000
+waitidle
 screenshot
 url
 done

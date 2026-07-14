@@ -68,10 +68,16 @@ See the commands reference below, then write a `flows/my-flow.txt`.
 | `m2o <cell_sel> <text>` | Many2one: click cell → type → pick first dropdown (use instead of `fill` on OWL combobox cells) |
 | `addline <field_name>` | Add a row to a One2many list (e.g. `addline order_line`), waits for row to appear |
 | `press <key>` | Keyboard: `Enter` `Tab` `Escape` `ArrowDown` |
-| `wait <ms>` | Pause |
+| `wait <ms>` | Pause (fixed — prefer `waitidle`) |
+| `waitidle [maxMs]` | Wait until Odoo is idle (RPCs done + loading overlay gone). Much faster than fixed waits |
 | `screenshot [name]` | Save PNG to `traces/` |
 | `snapshot` | Print visible element tree (selector discovery) |
 | `eval <js>` | Run JS, print result |
+| `cookie <name> <value> [domain]` | Set a raw browser cookie (works for HttpOnly, e.g. a session_id obtained via `/web/session/authenticate`) |
+| `highlight <sel>` | Draw Playwright's native pink box around an element — shows in screenshots, but NOT in the trace viewer's Snapshot tab |
+| `mark <sel> [caption]` | Inject a real red box + caption around an element — visible in the trace viewer's Snapshot tab and every screenshot after it |
+| `unmark` | Remove all marks added by `mark` |
+| `bbox <sel>` | Print an element's `{x,y,width,height}` viewport box, for a custom annotation (e.g. drawing a circle/arrow with Pillow) |
 | `evals <sel>` | Print outerHTML of matched elements (structure inspection) |
 | `find <sel>` | Print up to 5 matching elements |
 | `waitfor <sel>` | Wait up to 15s for selector to appear |

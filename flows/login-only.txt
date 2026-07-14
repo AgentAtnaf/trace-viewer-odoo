@@ -7,7 +7,7 @@
 fill input#login <ADMIN_USER>
 fill input#password <ADMIN_PASS>
 press Enter
-wait 6000
+waitidle
 url
 screenshot
 done

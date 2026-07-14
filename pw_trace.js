@@ -27,7 +27,7 @@ if (!label) {
   process.exit(1);
 }
 
-const tracesDir = path.join(__dirname, 'traces');
+const tracesDir = process.env.TRACE_OUT_DIR || path.join(__dirname, 'traces');
 if (!fs.existsSync(tracesDir)) fs.mkdirSync(tracesDir, { recursive: true });
 
 const traceFile = path.join(tracesDir, `${label}.zip`);
@@ -39,6 +39,35 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+
+  // Track in-flight RPCs (excluding the bus/longpolling connections that never close)
+  // so `waitidle` can detect real idle instead of relying on networkidle
+  await context.addInitScript(() => {
+    window.__odooPending = 0;
+    const skip = (u) => {
+      const url = typeof u === 'string' ? u : (u && u.url) || '';
+      return url.includes('/longpolling/') || url.includes('/websocket') || url.includes('/bus/');
+    };
+    const origFetch = window.fetch;
+    window.fetch = function (...a) {
+      if (skip(a[0])) return origFetch.apply(this, a);
+      window.__odooPending++;
+      return origFetch.apply(this, a).finally(() => window.__odooPending--);
+    };
+    const origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, u, ...r) {
+      this.__skipCount = skip(u);
+      return origOpen.call(this, m, u, ...r);
+    };
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (...a) {
+      if (!this.__skipCount) {
+        window.__odooPending++;
+        this.addEventListener('loadend', () => window.__odooPending--, { once: true });
+      }
+      return origSend.apply(this, a);
+    };
+  });
 
   await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
@@ -58,10 +87,16 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log('  m2o <cell_sel> <text>    many2one: click cell → type → pick first dropdown result');
   console.log('  addline <field_name>     add row to One2many list, waits for new row to appear');
   console.log('  press <key>              keyboard press (Enter, Tab, Escape, ArrowDown...)');
-  console.log('  wait <ms>                pause');
+  console.log('  wait <ms>                pause (fixed — prefer waitidle/waitfor)');
+  console.log('  waitidle [maxMs]         wait until Odoo is idle (network + loading overlay), fast');
   console.log('  screenshot [name]        save screenshot to traces/');
   console.log('  snapshot                 print page element tree (for selector discovery)');
   console.log('  eval <js>                evaluate JS and print result');
+  console.log('  cookie <n> <v> [domain]  set a raw browser cookie (works for HttpOnly, e.g. session_id)');
+  console.log('  highlight <sel>          draw Playwright\'s native pink box (screenshot-only, invisible in trace viewer)');
+  console.log('  mark <sel> [caption]     inject a REAL red box+caption around an element (visible in trace viewer Snapshot tab)');
+  console.log('  unmark                   remove all marks added by `mark`');
+  console.log('  bbox <sel>               print an element\'s {x,y,width,height} viewport box (for custom annotation)');
   console.log('  evals <sel>              print outerHTML of matched elements (structure inspection)');
   console.log('  find <sel>               print matching elements (max 5)');
   console.log('  waitfor <sel>            wait for selector to appear');
@@ -176,6 +211,30 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         await page.waitForTimeout(ms);
         console.log(`  waited ${ms}ms`);
 
+      } else if (cmd === 'waitidle') {
+        // Wait for Odoo to actually finish: network idle + loading indicators gone.
+        // Much faster than fixed waits — returns as soon as the page is ready.
+        // Usage: waitidle [maxMs]   (default 15000)
+        const maxMs = parseInt(parts[1] || '15000');
+        const t0 = Date.now();
+        // Lead-in: give the previous action time to start its request/navigation,
+        // otherwise the pending-RPC check can pass before the RPC even fires
+        await page.waitForTimeout(400);
+        // Idle = no pending RPCs (bus/longpolling excluded via init script),
+        // no Odoo loading overlay (.o_loading_indicator 17+, .o_loading 14, .o_blockUI),
+        // and document fully loaded
+        await page.waitForFunction(() => {
+          const pending = window.__odooPending || 0;
+          // Loading overlays only count if actually visible — Odoo keeps a
+          // permanent hidden <div class="o_loading"> in the DOM and toggles display
+          const overlays = document.querySelectorAll('.o_loading_indicator, .o_loading, .o_blockUI');
+          const visible = Array.from(overlays).some(el => el.offsetParent !== null);
+          return pending === 0 && !visible && document.readyState === 'complete';
+        }, undefined, { timeout: maxMs }).catch(() => {});
+        // Small settle for OWL rendering after RPCs complete
+        await page.waitForTimeout(300);
+        console.log(`  idle after ${Date.now() - t0}ms`);
+
       } else if (cmd === 'screenshot') {
         const imgName = parts[1] || `${label}-${Date.now()}`;
         const imgPath = path.join(tracesDir, imgName.endsWith('.png') ? imgName : `${imgName}.png`);
@@ -199,6 +258,79 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
       } else if (cmd === 'eval') {
         const result = await page.evaluate(new Function(`return (${rawRest})`));
         console.log(`  eval: ${JSON.stringify(result)}`);
+
+      } else if (cmd === 'highlight') {
+        // Playwright's native highlight: draws a pink box around the element
+        // directly in the live page — shows up in the next screenshot, but
+        // NOT in the trace viewer's Snapshot/DOM tab (Playwright strips its
+        // own debug overlay before serializing snapshots). Use `mark`
+        // instead if the annotation needs to survive in the trace viewer.
+        // Usage: highlight <selector>
+        await page.locator(rawRest).first().highlight();
+        console.log(`  highlighted: ${rawRest}`);
+
+      } else if (cmd === 'mark') {
+        // Inject a REAL red box (+ optional caption) around an element —
+        // unlike highlight(), this is genuine page content, so it survives
+        // into the trace viewer's Snapshot/DOM tab and every screenshot
+        // taken afterward, until cleared with `unmark`.
+        // Resolve the target via Playwright's own locator (supports
+        // :has-text() and friends, which plain querySelector cannot), then
+        // draw using the already-resolved coordinates.
+        // Usage: mark <selector> [caption text]  (wrap selector in 'single
+        // quotes' if it contains spaces, e.g. 'button:has-text("Log in")')
+        const sel = parts[1];
+        const caption = parts.slice(2).join(' ');
+        const rect = await page.locator(sel).first().boundingBox().catch(() => null);
+        if (!rect) {
+          console.log(`  mark NOT FOUND: ${sel}`);
+        } else {
+          await page.evaluate(({ rect, caption }) => {
+            const box = document.createElement('div');
+            box.setAttribute('data-pw-mark', '1');
+            box.style.cssText = `position:fixed;left:${rect.x - 6}px;top:${rect.y - 6}px;` +
+              `width:${rect.width + 12}px;height:${rect.height + 12}px;border:3px solid #dc1e1e;` +
+              `border-radius:6px;z-index:2147483647;pointer-events:none;box-sizing:border-box;`;
+            document.body.appendChild(box);
+            if (caption) {
+              const label = document.createElement('div');
+              label.setAttribute('data-pw-mark', '1');
+              label.textContent = caption;
+              label.style.cssText = `position:fixed;left:${rect.x}px;top:${Math.max(rect.y - 38, 4)}px;` +
+                `background:#dc1e1e;color:#fff;font:bold 14px sans-serif;padding:4px 10px;` +
+                `border-radius:4px;z-index:2147483647;pointer-events:none;white-space:nowrap;`;
+              document.body.appendChild(label);
+            }
+          }, { rect, caption });
+          console.log(`  marked: ${sel}${caption ? ' — ' + caption : ''}`);
+        }
+
+      } else if (cmd === 'unmark') {
+        // Remove all marks added by `mark`.
+        await page.evaluate(() => {
+          document.querySelectorAll('[data-pw-mark]').forEach((e) => e.remove());
+        });
+        console.log('  cleared all marks');
+
+      } else if (cmd === 'bbox') {
+        // Print an element's viewport bounding box as JSON — feed the
+        // coordinates to an external tool (e.g. Pillow) to draw a custom
+        // circle/arrow annotation on the saved screenshot.
+        // Usage: bbox <selector>
+        const box = await page.locator(rawRest).first().boundingBox();
+        console.log(`  bbox: ${JSON.stringify(box)}`);
+
+      } else if (cmd === 'cookie') {
+        // Set a raw browser cookie at the context level — works even for
+        // HttpOnly cookies (e.g. an Odoo session_id obtained out-of-band),
+        // which page-JS document.cookie can never touch.
+        // Usage: cookie <name> <value> [domain] [path]
+        const name = parts[1];
+        const value = parts[2];
+        const domain = parts[3] || new URL(page.url()).hostname;
+        const cpath = parts[4] || '/';
+        await context.addCookies([{ name, value, domain, path: cpath }]);
+        console.log(`  cookie set: ${name} on ${domain}${cpath}`);
 
       } else if (cmd === 'evals') {
         // Print outerHTML (first 300 chars) of each matched element — instant structure inspection

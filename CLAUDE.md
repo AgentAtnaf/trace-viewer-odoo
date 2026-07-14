@@ -187,7 +187,13 @@ wait 1500
 ```
 
 **After hash URL navigation, page looks empty:**
-- OWL renders after `domcontentloaded` — always add `wait 5000` to `wait 8000` after hash navigation
+- OWL renders after `domcontentloaded` — add `waitidle` after hash navigation
+
+**Flows are slow:**
+- Replace fixed `wait <ms>` with `waitidle` — it returns as soon as Odoo finishes
+  its RPCs and loading overlays disappear (typically <1s locally vs 5-8s fixed waits)
+- Use `waitfor <sel>` when waiting for a specific element (e.g. `waitfor .o-autocomplete--dropdown-item` after typing in an autocomplete)
+- Keep small fixed waits only for pure CSS animations that fire no network requests
 
 ---
 
