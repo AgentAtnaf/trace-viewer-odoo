@@ -9,10 +9,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # --- LOGIN ---
-fill input#login <ADMIN_USER>
-fill input#password <ADMIN_PASS>
-press Enter
-waitidle
+# Auto-skips if the saved session (.sessions/) is still valid — no repeated logins
+login <ADMIN_USER> <ADMIN_PASS>
 screenshot
 
 # --- OPEN QUOTATIONS LIST ---

@@ -4,10 +4,8 @@
 # Usage:
 #   ./trace.sh SMOKE http://<ODOO_HOST>:8069/web/login < flows/login-only.txt
 
-fill input#login <ADMIN_USER>
-fill input#password <ADMIN_PASS>
-press Enter
-waitidle
+# `login` auto-skips if the saved session (.sessions/) is still valid
+login <ADMIN_USER> <ADMIN_PASS>
 url
 screenshot
 done

@@ -5,3 +5,5 @@ traces/*
 *.png
 config.json
 .env
+# saved login sessions — contain auth cookies, never commit
+.sessions/

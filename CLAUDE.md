@@ -40,17 +40,17 @@ Once you have the URL + DB + credentials, do a quick probe run to discover:
 ### 1. Verify login works
 ```bash
 ./trace.sh PROBE http://ODOO_URL/web/login <<'EOF'
-fill input#login ADMIN_USER
-fill input#password ADMIN_PASS
-press Enter
-wait 6000
+login ADMIN_USER ADMIN_PASS
 url
 screenshot
 done
 EOF
 ```
 
-If the URL redirected to `/web` — login works. If it redirected back to `/web/login` — credentials are wrong.
+The `login` command reports success/failure explicitly. Sessions are cached per host+db in
+`.sessions/` — subsequent runs skip the login form automatically (it verifies the session
+server-side via `get_session_info`, since Odoo renders the login form on `/web/login` even
+when already authenticated).
 
 ### 2. Discover action IDs for the target module
 

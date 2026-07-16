@@ -59,6 +59,7 @@ See the commands reference below, then write a `flows/my-flow.txt`.
 
 | Command | What it does |
 |---|---|
+| `login <user> <pass>` | Log in — auto-skips when the saved session (`.sessions/`, per host+db) is still valid |
 | `goto <url>` | Navigate |
 | `click <sel>` | Click — waits for visibility |
 | `fclick <sel>` | Force click — skips visibility check |

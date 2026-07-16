@@ -38,7 +38,23 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log(`Output:  ${traceFile}`);
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+
+  // Reuse the login session between runs (cookies persisted per host+port+db)
+  // so flows don't have to log in every single time
+  const sessionsDir = path.join(__dirname, '.sessions');
+  let sessionFile = null;
+  try {
+    const u = new URL(targetUrl);
+    const db = u.searchParams.get('db') || 'default';
+    sessionFile = path.join(sessionsDir, `${u.hostname}_${u.port || '80'}_${db}.json`);
+  } catch { /* non-URL target — skip session reuse */ }
+
+  const contextOpts = { viewport: { width: 1440, height: 900 } };
+  if (sessionFile && fs.existsSync(sessionFile)) {
+    contextOpts.storageState = sessionFile;
+    console.log(`Session: reusing saved login (${path.basename(sessionFile)})`);
+  }
+  const context = await browser.newContext(contextOpts);
 
   // Track in-flight RPCs (excluding the bus/longpolling connections that never close)
   // so `waitidle` can detect real idle instead of relying on networkidle
@@ -90,6 +106,7 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log(`URL:    ${page.url()}`);
 
   console.log('\n--- Commands ---');
+  console.log('  login <user> <pass>      log in — auto-skips if the saved session is still valid');
   console.log('  goto <url>               navigate');
   console.log('  click <sel>              standard Playwright click (waits for visibility)');
   console.log('  fclick <sel>             force click (bypasses visibility checks)');
@@ -117,6 +134,38 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log('  url                      print current URL');
   console.log('  title                    print page title');
   console.log('  done                     stop trace, save zip, exit\n');
+
+  // Shared idle-wait: no pending document navigation (Node-side counter),
+  // no pending RPCs (in-page fetch/XHR counter, bus/longpolling excluded),
+  // no visible loading overlay, document complete — and stable 250ms later
+  const waitIdle = async (maxMs = 15000) => {
+    const t0 = Date.now();
+    const deadline = t0 + maxMs;
+    // Lead-in: give the previous action time to start its request/navigation
+    await page.waitForTimeout(400);
+    const checkIdle = () => page.evaluate(() => {
+      const pending = window.__odooPending || 0;
+      // Overlays only count if visible — Odoo keeps a permanent hidden
+      // <div class="o_loading"> in the DOM and toggles display
+      const overlays = document.querySelectorAll('.o_loading_indicator, .o_loading, .o_blockUI');
+      const visible = Array.from(overlays).some(el => el.offsetParent !== null);
+      return pending === 0 && !visible && document.readyState === 'complete';
+    }).catch(() => false); // evaluate throws mid-navigation → not idle
+    while (Date.now() < deadline) {
+      if (pendingNav > 0) {
+        await page.waitForLoadState('load', { timeout: deadline - Date.now() }).catch(() => {});
+        await page.waitForTimeout(100);
+        continue;
+      }
+      if (await checkIdle()) {
+        await page.waitForTimeout(250);
+        if (pendingNav === 0 && await checkIdle()) break;
+      } else {
+        await page.waitForTimeout(150);
+      }
+    }
+    return Date.now() - t0;
+  };
 
   const rl = readline.createInterface({ input: process.stdin });
 
@@ -226,41 +275,46 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         console.log(`  waited ${ms}ms`);
 
       } else if (cmd === 'waitidle') {
-        // Wait for Odoo to actually finish: network idle + loading indicators gone.
+        // Wait for Odoo to actually finish: RPCs drained + loading overlays gone.
         // Much faster than fixed waits — returns as soon as the page is ready.
         // Usage: waitidle [maxMs]   (default 15000)
-        const maxMs = parseInt(parts[1] || '15000');
-        const t0 = Date.now();
-        const deadline = t0 + maxMs;
-        // Lead-in: give the previous action time to start its request/navigation,
-        // otherwise the pending-RPC check can pass before the RPC even fires
-        await page.waitForTimeout(400);
-        // Idle = no pending document navigation (Node-side counter: form POSTs/redirects),
-        // no pending RPCs (in-page fetch/XHR counter, bus/longpolling excluded),
-        // no visible Odoo loading overlay, document fully loaded —
-        // and STABLE: the same must hold 250ms later (catches cascading RPCs)
-        const checkIdle = () => page.evaluate(() => {
-          const pending = window.__odooPending || 0;
-          // Overlays only count if visible — Odoo keeps a permanent hidden
-          // <div class="o_loading"> in the DOM and toggles display
-          const overlays = document.querySelectorAll('.o_loading_indicator, .o_loading, .o_blockUI');
-          const visible = Array.from(overlays).some(el => el.offsetParent !== null);
-          return pending === 0 && !visible && document.readyState === 'complete';
-        }).catch(() => false); // evaluate throws mid-navigation → not idle
-        while (Date.now() < deadline) {
-          if (pendingNav > 0) {
-            await page.waitForLoadState('load', { timeout: deadline - Date.now() }).catch(() => {});
-            await page.waitForTimeout(100);
-            continue;
-          }
-          if (await checkIdle()) {
-            await page.waitForTimeout(250);
-            if (pendingNav === 0 && await checkIdle()) break;
-          } else {
-            await page.waitForTimeout(150);
-          }
+        const ms = await waitIdle(parseInt(parts[1] || '15000'));
+        console.log(`  idle after ${ms}ms`);
+
+      } else if (cmd === 'login') {
+        // Smart login: if the session (reused from .sessions/) is still valid,
+        // skip the form and go straight to /web. NOTE: Odoo renders the login
+        // form on /web/login even when authenticated — the form's presence
+        // proves nothing; ask the server via get_session_info instead.
+        // Usage: login <user> <password>
+        const user = parts[1];
+        const pass = parts.slice(2).join(' ');
+        const uid = await page.evaluate(async () => {
+          try {
+            const r = await fetch('/web/session/get_session_info', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {} }),
+            });
+            const j = await r.json();
+            return (j.result && j.result.uid) || null;
+          } catch { return null; }
+        });
+        if (uid) {
+          const origin = new URL(page.url()).origin;
+          await page.goto(origin + '/web', { timeout: 20000 });
+          const ms = await waitIdle(15000);
+          console.log(`  login skipped — session still valid (uid=${uid}, ${ms}ms)`);
+        } else {
+          await page.fill('input#login', user);
+          await page.fill('input#password', pass);
+          await page.keyboard.press('Enter');
+          const ms = await waitIdle(20000);
+          const failed = await page.evaluate(() => !!document.querySelector('input#login'));
+          console.log(failed
+            ? `  login FAILED for "${user}" — still on login form (check credentials/db)`
+            : `  logged in as ${user} (${ms}ms)`);
         }
-        console.log(`  idle after ${Date.now() - t0}ms`);
 
       } else if (cmd === 'screenshot') {
         const imgName = parts[1] || `${label}-${Date.now()}`;
@@ -437,6 +491,12 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
 
   rl.close();
   console.log('\nStopping trace...');
+  // Persist the login session so the next run against the same host+db
+  // can skip the login step entirely
+  if (sessionFile) {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    await context.storageState({ path: sessionFile }).catch(() => {});
+  }
   await context.tracing.stop({ path: traceFile });
   await browser.close();
 
