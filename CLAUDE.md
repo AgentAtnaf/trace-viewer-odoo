@@ -72,8 +72,19 @@ Replace `->>'en_US'` with `::text` on Odoo 14 where `name` is a plain varchar.
 
 After opening a form (e.g. new SO), run:
 ```
-eval Array.from(document.querySelectorAll('button[name]')).map(b => b.name + '=' + b.textContent.trim().slice(0,25))
+buttons
 ```
+This lists every visible button as `name="<internal>" | "<label>"` — the ground truth for
+which selector to click. Button names vary by module (`action_confirm` vs `action_sale_ok`
+vs numeric action IDs), so never guess: run `buttons` first.
+
+**Or skip internal names entirely** — click by the visible label:
+```
+clickbtn Create Invoice
+```
+`clickbtn` matches visible text (exact first, then contains, case-insensitive) and prints
+the internal name it resolved to, so you learn the selector for free. If it reports
+NOT FOUND, run `buttons` to see what's actually on screen.
 
 ### 4. Find the "Add a line" / "Add a product" button text
 
@@ -168,9 +179,10 @@ Then run:
 ## Debugging tips
 
 **Element not found / timeout:**
+- Use `buttons` to list every visible button (internal name + label) — run this before guessing any button selector
+- Use `clickbtn <label>` to click by visible text instead of internal name
 - Use `evals <sel>` to print outerHTML of matched elements — reveals actual structure in one shot
 - Use `snapshot` to print the visible element tree
-- Use `find button` to list all buttons on the page
 - `click`/`fclick` timeouts now report whether the selector matched 0 elements vs existed but wasn't actionable
 
 **Click fires but nothing happens:**

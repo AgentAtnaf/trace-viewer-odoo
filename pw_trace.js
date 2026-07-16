@@ -72,6 +72,18 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
 
+  // Track in-flight document navigations (form POSTs, redirects) — these are NOT
+  // XHR/fetch so the in-page counter can't see them, and waitidle would pass early
+  let pendingNav = 0;
+  page.on('request', (r) => {
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) pendingNav++;
+  });
+  const navDone = (r) => {
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) pendingNav = Math.max(0, pendingNav - 1);
+  };
+  page.on('requestfinished', navDone);
+  page.on('requestfailed', navDone);
+
   await page.goto(targetUrl, { timeout: 30000 });
   await page.waitForLoadState('domcontentloaded');
   console.log(`\nLoaded: ${await page.title()}`);
@@ -82,6 +94,8 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
   console.log('  click <sel>              standard Playwright click (waits for visibility)');
   console.log('  fclick <sel>             force click (bypasses visibility checks)');
   console.log('  jclick <sel>             JS .click() (OWL2-friendly for Odoo SPA buttons)');
+  console.log('  clickbtn <text>          click button by visible label (prints internal name)');
+  console.log('  buttons                  list visible buttons: internal name + label');
   console.log('  fill <sel> <text>        fill input (use single quotes for selectors with spaces)');
   console.log('  type <text>              type text into focused element (keyboard events, no selector)');
   console.log('  m2o <cell_sel> <text>    many2one: click cell → type → pick first dropdown result');
@@ -217,22 +231,35 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         // Usage: waitidle [maxMs]   (default 15000)
         const maxMs = parseInt(parts[1] || '15000');
         const t0 = Date.now();
+        const deadline = t0 + maxMs;
         // Lead-in: give the previous action time to start its request/navigation,
         // otherwise the pending-RPC check can pass before the RPC even fires
         await page.waitForTimeout(400);
-        // Idle = no pending RPCs (bus/longpolling excluded via init script),
-        // no Odoo loading overlay (.o_loading_indicator 17+, .o_loading 14, .o_blockUI),
-        // and document fully loaded
-        await page.waitForFunction(() => {
+        // Idle = no pending document navigation (Node-side counter: form POSTs/redirects),
+        // no pending RPCs (in-page fetch/XHR counter, bus/longpolling excluded),
+        // no visible Odoo loading overlay, document fully loaded —
+        // and STABLE: the same must hold 250ms later (catches cascading RPCs)
+        const checkIdle = () => page.evaluate(() => {
           const pending = window.__odooPending || 0;
-          // Loading overlays only count if actually visible — Odoo keeps a
-          // permanent hidden <div class="o_loading"> in the DOM and toggles display
+          // Overlays only count if visible — Odoo keeps a permanent hidden
+          // <div class="o_loading"> in the DOM and toggles display
           const overlays = document.querySelectorAll('.o_loading_indicator, .o_loading, .o_blockUI');
           const visible = Array.from(overlays).some(el => el.offsetParent !== null);
           return pending === 0 && !visible && document.readyState === 'complete';
-        }, undefined, { timeout: maxMs }).catch(() => {});
-        // Small settle for OWL rendering after RPCs complete
-        await page.waitForTimeout(300);
+        }).catch(() => false); // evaluate throws mid-navigation → not idle
+        while (Date.now() < deadline) {
+          if (pendingNav > 0) {
+            await page.waitForLoadState('load', { timeout: deadline - Date.now() }).catch(() => {});
+            await page.waitForTimeout(100);
+            continue;
+          }
+          if (await checkIdle()) {
+            await page.waitForTimeout(250);
+            if (pendingNav === 0 && await checkIdle()) break;
+          } else {
+            await page.waitForTimeout(150);
+          }
+        }
         console.log(`  idle after ${Date.now() - t0}ms`);
 
       } else if (cmd === 'screenshot') {
@@ -331,6 +358,42 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         const cpath = parts[4] || '/';
         await context.addCookies([{ name, value, domain, path: cpath }]);
         console.log(`  cookie set: ${name} on ${domain}${cpath}`);
+
+      } else if (cmd === 'buttons') {
+        // List all visible buttons: internal name + visible label — the ground truth
+        // for picking action buttons (names vary by module: action_confirm vs action_sale_ok vs numeric IDs)
+        const list = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll('button, a[role="button"]'))
+            .filter(e => e.offsetParent !== null)
+            .map(e => ({
+              name: e.getAttribute('name') || '',
+              text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+              disabled: !!e.disabled,
+            }))
+            .filter(b => b.text || b.name)
+            .slice(0, 60);
+        });
+        if (list.length === 0) console.log('  (no visible buttons)');
+        list.forEach(b => console.log(`  name="${b.name}" | "${b.text}"${b.disabled ? ' [disabled]' : ''}`));
+
+      } else if (cmd === 'clickbtn') {
+        // Click a button by its VISIBLE TEXT (exact match first, then contains, case-insensitive).
+        // Use when you know the label but not the internal name. Prints the name it resolved to.
+        const wanted = rawRest.trim().toLowerCase();
+        const result = await page.evaluate((w) => {
+          const els = Array.from(document.querySelectorAll('button, a[role="button"], .btn'))
+            .filter(e => e.offsetParent !== null && !e.disabled);
+          const norm = (e) => (e.textContent || '').trim().replace(/\s+/g, ' ').toLowerCase();
+          const el = els.find(e => norm(e) === w) || els.find(e => norm(e).includes(w));
+          if (!el) return null;
+          el.click();
+          return { text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40), name: el.getAttribute('name') || '' };
+        }, wanted);
+        if (result) {
+          console.log(`  clickbtn: "${result.text}" (name="${result.name}")`);
+        } else {
+          console.log(`  clickbtn NOT FOUND: "${rawRest}" — run 'buttons' to list what's visible`);
+        }
 
       } else if (cmd === 'evals') {
         // Print outerHTML (first 300 chars) of each matched element — instant structure inspection

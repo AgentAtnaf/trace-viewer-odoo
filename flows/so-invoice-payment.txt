@@ -55,17 +55,15 @@ waitidle
 screenshot
 
 # --- CONFIRM SALE ORDER ---
-# Standard Odoo: button[name="action_confirm"]
-# Some custom modules use: button[name="action_sale_ok"]
-# Discover with: eval Array.from(document.querySelectorAll('button[name]')).map(b=>b.name+'='+b.textContent.trim().slice(0,20))
-fclick button[name="action_confirm"]
+# clickbtn matches the VISIBLE label — no need to know the internal name
+# (which varies by module: action_confirm vs action_sale_ok vs custom).
+# Run `buttons` to list all visible buttons if unsure of the label.
+clickbtn Confirm
 waitidle
 screenshot
 
 # --- CREATE INVOICE ---
-# The "Create Invoice" button usually has a numeric name (the action ID).
-# Discover with the eval above after confirming the SO.
-fclick button[name="<CREATE_INVOICE_BUTTON_NAME>"]
+clickbtn Create Invoice
 waitidle
 screenshot
 
