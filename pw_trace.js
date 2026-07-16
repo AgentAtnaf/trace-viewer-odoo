@@ -289,7 +289,7 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
         // Usage: login <user> <password>
         const user = parts[1];
         const pass = parts.slice(2).join(' ');
-        const uid = await page.evaluate(async () => {
+        const getSession = () => page.evaluate(async () => {
           try {
             const r = await fetch('/web/session/get_session_info', {
               method: 'POST',
@@ -297,23 +297,40 @@ const traceFile = path.join(tracesDir, `${label}.zip`);
               body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {} }),
             });
             const j = await r.json();
-            return (j.result && j.result.uid) || null;
+            return j.result && j.result.uid ? { uid: j.result.uid, db: j.result.db } : null;
           } catch { return null; }
         });
-        if (uid) {
+        let sess = await getSession();
+        // Guard against wrong-DB sessions: if the target URL pins a db (?db=...)
+        // and the restored session belongs to a different one, discard it —
+        // otherwise the trace would silently record against the wrong database
+        const wantDb = (() => {
+          try { return new URL(targetUrl).searchParams.get('db'); } catch { return null; }
+        })();
+        if (sess && wantDb && sess.db !== wantDb) {
+          console.log(`  session is for db "${sess.db}" but target wants "${wantDb}" — discarding session, logging in fresh`);
+          await context.clearCookies();
+          await page.goto(targetUrl, { timeout: 20000 });
+          await waitIdle(10000);
+          sess = null;
+        }
+        if (sess) {
           const origin = new URL(page.url()).origin;
           await page.goto(origin + '/web', { timeout: 20000 });
           const ms = await waitIdle(15000);
-          console.log(`  login skipped — session still valid (uid=${uid}, ${ms}ms)`);
+          console.log(`  login skipped — session still valid (uid=${sess.uid}, db=${sess.db}, ${ms}ms)`);
         } else {
           await page.fill('input#login', user);
           await page.fill('input#password', pass);
           await page.keyboard.press('Enter');
           const ms = await waitIdle(20000);
           const failed = await page.evaluate(() => !!document.querySelector('input#login'));
-          console.log(failed
-            ? `  login FAILED for "${user}" — still on login form (check credentials/db)`
-            : `  logged in as ${user} (${ms}ms)`);
+          if (failed) {
+            console.log(`  login FAILED for "${user}" — still on login form (check credentials/db)`);
+          } else {
+            const after = await getSession();
+            console.log(`  logged in as ${user} (db=${after ? after.db : '?'}, ${ms}ms)`);
+          }
         }
 
       } else if (cmd === 'screenshot') {

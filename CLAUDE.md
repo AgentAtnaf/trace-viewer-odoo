@@ -52,6 +52,13 @@ The `login` command reports success/failure explicitly. Sessions are cached per 
 server-side via `get_session_info`, since Odoo renders the login form on `/web/login` even
 when already authenticated).
 
+**Switching databases:** always pin the target DB in the login URL (`/web/login?db=<name>`).
+Sessions are cached per db, and `login` cross-checks the session's actual db against the
+URL's `?db=` — a mismatched session is discarded and a fresh login performed, so you can
+switch DBs freely between runs. Without `?db=` on a multi-DB server, a stale session could
+land the trace in whichever db it was created on — the login output always prints `db=...`
+so verify it matches what you expect.
+
 ### 2. Discover action IDs for the target module
 
 For Sales (sale.order):
