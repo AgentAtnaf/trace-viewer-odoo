@@ -1,0 +1,44 @@
+Context: Odoo 17, dv_ryt_uat, Purchase Requests app (menu 436 / action 664). Instance uses the
+mk_apps_sidebar backend theme: after login /web opens Discuss and apps are sidebar nav-links,
+not full-screen home-menu tiles.
+
+What failed:
+  navmenu Purchase Requests
+  -> ERROR [navmenu]: navmenu NOT FOUND: "Purchase Requests" (app level)
+  click [role="menuitem"]:text-is("Purchase Requests")
+  -> page.click: selector matched -1 element(s) but was not actionable
+(the app is also a section of itself, and the sidebar link is not visible/actionable)
+
+Workaround: hook the app by its stable xmlid and JS-click it:
+  waitfor a[data-menu-xmlid="purchase_request.parent_menu_purchase_request"]
+  jclick  a[data-menu-xmlid="purchase_request.parent_menu_purchase_request"]
+The list then opens grouped by "Requested by" and COLLAPSED (default filter + group-by), so the flow
+must `click .o_group_header` before a `.o_data_row` exists.
+
+Suggested fix: let navmenu fall back to a[data-menu-xmlid] / the sidebar when the home-menu tile is
+missing, and document that `expect text` is an exact match (use a per-column th[data-name="..."]
+selector, not the whole thead) and that spaced selectors must be quoted.
+
+---
+RESOLVED 2026-11-05 (pw_trace.js, navLocate level 'app').
+
+navmenu now falls back to a[data-menu-xmlid] when no home-menu tile matches:
+  1. the xmlid itself, if the label looks like one (purchase_request.parent_menu_...)
+  2. exact visible text
+  3. partial visible text
+The app-level waitForSelector also waits on a[data-menu-xmlid], so a sidebar-themed
+instance no longer burns the full action timeout before failing. On a miss the
+candidate list now prints the available xmlids; previously it was EMPTY on these
+instances, which is why the old error said nothing useful.
+
+Verified live against https://rti.odoo17cdv.com / dev_rti_uat (mk_apps_sidebar):
+  navmenu Settings  ->  navmenu -> app "Settings"  ->  flow PASSED
+  navmenu NoSuchAppHere -> candidates list 40+ real xmlids
+Kit regression suite 19/19.
+
+NOT changed: `expect text` exact-match and spaced-selector quoting, also suggested
+in this note, are documented behaviour and were left alone.
+
+Same failure hits the hosted Trace Kit API (trace.odoo19e.com), which runs this
+command set server-side - three API runs died on it today. Their copy needs the
+same patch; workaround there is jclick a[data-menu-xmlid="..."].

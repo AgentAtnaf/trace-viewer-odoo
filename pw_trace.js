@@ -468,8 +468,27 @@ try {
       // Odoo 14: .o_menu_apps a.o_app  |  Odoo 16/17: a.o-app-menu-item carries the
       // app label (its child div.o_app is icon-only, so match the anchor).
       const items = Array.from(document.querySelectorAll('.o_menu_apps a.o_app, a.o-app-menu-item, a.o_app'));
-      const el = items.find(e => norm(e.textContent) === w) || items.find(e => norm(e.textContent).includes(w));
-      if (!el) return { ok: false, candidates: listText(items) };
+      let el = items.find(e => norm(e.textContent) === w) || items.find(e => norm(e.textContent).includes(w));
+      if (!el) {
+        // Backend themes such as mk_apps_sidebar render apps as sidebar nav-links and
+        // ship no home-menu tiles at all, so `items` above is empty and every navmenu
+        // died with '"<App>" (app level)'. Fall back to the stable data-menu-xmlid
+        // anchor: match the xmlid itself when the label looks like one
+        // (purchase_request.parent_menu_purchase_request), else the visible text.
+        const links = Array.from(document.querySelectorAll('a[data-menu-xmlid]'));
+        const asXmlid = (spec.label || '').trim();
+        el = links.find(e => e.getAttribute('data-menu-xmlid') === asXmlid)
+          || links.find(e => norm(e.textContent) === w)
+          || links.find(e => norm(e.textContent).includes(w));
+        if (el) {
+          tag(el);
+          const label = (el.textContent || '').trim() || el.getAttribute('data-menu-xmlid');
+          return { ok: true, text: label, kind: 'item', leaf: true, rect: rectOf(el), via: 'xmlid' };
+        }
+        // Offer the xmlids too: on a sidebar theme the tile list is empty, so the old
+        // candidate list came back blank and said nothing about what IS available.
+        return { ok: false, candidates: listText(items).concat(links.map(e => e.getAttribute('data-menu-xmlid')).filter(Boolean)) };
+      }
       tag(el);
       return { ok: true, text: el.textContent.trim(), kind: 'item', leaf: true, rect: rectOf(el) };
     }
@@ -582,7 +601,7 @@ try {
     }).catch(() => {});
     // Wait for the app grid to actually populate (portal render can outlast a
     // fixed sleep) — robust across versions instead of a flaky 250ms guess.
-    await page.waitForSelector('a.o-app-menu-item, .o_menu_apps a.o_app', { timeout: actionTimeout }).catch(() => {});
+    await page.waitForSelector('a.o-app-menu-item, .o_menu_apps a.o_app, a[data-menu-xmlid]', { timeout: actionTimeout }).catch(() => {});
     await page.waitForTimeout(200); // let the overlay finish painting before the mark/snapshot
     let r = await navLocate({ level: 'app', label: labels[0] });
     if (!r.ok) return fail(`"${labels[0]}" (app level)`, r);
