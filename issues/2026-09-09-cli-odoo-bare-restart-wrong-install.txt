@@ -51,3 +51,8 @@ worth carrying over there:
 
 Related but distinct from the existing memory note about `cli.py odoo
 restart/stop` signalling a stale pid; this is the "right pid, wrong install" case.
+
+## STATUS 2026-11-23 — second ask DONE in dev-dashboard
+/api/odoo/status now returns `bin` and `conf` (from the running process's argv) plus `port` and
+`version`; `cli.py odoo status` prints them under the RUNNING line. The first ask (make
+`--version` required) is NOT done: changing start/restart semantics is a dashboard decision.

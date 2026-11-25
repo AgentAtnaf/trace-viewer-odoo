@@ -1,0 +1,16 @@
+Context: cn-dn-reason-sme (11-04); five flows define the same helper by hand
+(credit-limit-approval-shg, T26-08396, KC-MO-PLAN-DELIVERY-SLOT-CHECK,
+rma-replace-other-product-confirm, KC-CAPACITY-QUOTE-PICK-QTY-CONFIRM).
+
+What failed: flows draw a "STEP 2/5 ✓ PASS ..." banner with an eval'd window.pwStep()
+that inserts a div. A location.reload() (or any full navigation) drops the div and the
+helper, so later steps either lose the banner or fail calling pwStep.
+
+Suggested fix: a `step [pass|fail] <text>` command that draws the banner and re-draws it
+after every navigation, until the next `step` or `step off`.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+`step <text>`, `step pass <text>`, `step off` added. The kit keeps the text and redraws it on
+every domcontentloaded; pointer-events:none; on a failed step it turns red with the line and
+command. Proven: tests/gap_fixes.js (survives location.reload, does not block a click under it,
+red at the failing line) and live 17 + 14 (survived reload).

@@ -1,0 +1,13 @@
+Context: KC-CAPACITY-QUOTE-PICK-QTY-CONFIRM (Odoo 14, 10-19).
+
+What failed: a click opened an unexpected confirmation dialog (delivery-date check). The
+next steps timed out on elements behind it, and the log said only "selector matched 0
+elements"/TIMEOUT, so it read as a selector bug.
+
+Suggested fix: when a step fails, say which dialog is open (title + buttons), so an
+unexpected dialog is visible in the log at the step it blocked.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+every failed step prints the open dialog's title and footer buttons and stores it in the
+step's `dialog` field. Proven: tests/gap_fixes.js and live 17 ("Bye-bye, record!" — Delete | No,
+keep it) and 14 ("Confirmation" — Ok | Cancel).

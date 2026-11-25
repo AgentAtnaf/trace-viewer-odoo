@@ -1,0 +1,15 @@
+Context: so-delivery-date-shg-staging (11-09, product box), T26-08396 (11-17, Product
+input still holding the refused product's text).
+
+What failed: `type <text>` sends keystrokes to the focused element, so text already in an
+input is kept and the new text is appended ("Product AProduct B"). The autocomplete then
+searches for the joined string and finds nothing, or the wrong thing.
+
+Workaround: `press Control+a` (+ Backspace) before `type`.
+Suggested fix: a `retype <text>` command that clears the focused input first, and a NOTE
+from `type` when the focused input already had text (showing old -> new value).
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+`retype <text>` added (select-all, delete, type). `type` prints a NOTE with the old and new
+value when the focused input already had text. Proven: tests/gap_fixes.js and live Odoo 17
+(Quotations search box: AAA + BBB -> NOTE "AAABBB", retype CCC -> "CCC").

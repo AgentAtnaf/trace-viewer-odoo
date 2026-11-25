@@ -1,0 +1,30 @@
+Context: every Odoo version; flows written 2026-10-09 .. 2026-11-11.
+Seen in ~10 failed runs across 7 flows: cfa-probe (10-09), rebate-settlement-accrued-types
+(10-14), partner-product-restrict-shg + -guide (10-14), credit-limit-approval-shg (10-16),
+so-delivery-date-shg (11-09), shg-lot-picker-expiry-date (11-10), po-receipt-details-shg (11-11 x2).
+
+What failed: the quoting rule is different per command, so every new flow trips on it.
+  click/fclick/jclick/waitfor/find/scroll/...  take the rest of the line; quotes = hard error
+  fill/date/m2o/celltype/boolcell              need 'quotes' around a selector with spaces
+  mark                                         needs quotes, but an unquoted one only WARNS,
+                                               then fails as "mark NOT FOUND"
+  expect visible <sel>                         takes ONE token, so a selector with a space
+                                               silently becomes selector + "expected" text
+Run notes all blamed the flow ("my selector/quoting mistake"), so no issue was filed,
+but it is the same kit trap every time. The 2026-08-06 quoted-click note fixed click only.
+
+Workaround: rerun after reading the error.
+Suggested fix: make every command accept a selector quoted OR unquoted.
+  * rest-of-line commands: strip one pair of wrapping quotes instead of erroring;
+  * selector + value commands: when the selector is unquoted and the next tokens look like
+    more selector, use the longest prefix that actually matches an element (say so in the log);
+  * expect visible/hidden: the whole rest of the line is the selector.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+rest-of-line commands drop one pair of wrapping quotes (unwrapRest); selector+value commands
+use splitSelector — an unquoted selector is extended while the next token looks like CSS, and the
+longer form is kept only if it matches an element (logged as NOTE); expect visible/hidden take the
+rest of the line. Writing commands still refuse to guess when nothing matches yet.
+Proven: tests/gap_fixes.js (fill .o_field_widget[name="x"] input hello world, mark with
+:has-text("Open wizard") + caption, expect visible multi-token, plain value never swallowed);
+live Odoo 17 (dv_shg_stg) and 14 (dv_kc_utd): unquoted date selectors extended correctly.

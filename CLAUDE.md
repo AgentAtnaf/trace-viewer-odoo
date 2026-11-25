@@ -299,18 +299,43 @@ pick SearchTerm
   Failed login and hard timeouts always abort. Read `<label>.result.json` for
   per-step status, source line, duration, and reason. Env: `CMD_TIMEOUT`, `STRICT`.
 
-**Date / datetime fields (Odoo 17) eat a 30s timeout on click:**
-- Use `date <sel> <value>` — it fills WITHOUT clicking (the picker overlay isn't clickable),
-  fires `change`, closes the picker (Escape), and commits (blur). Never `click` a date input first.
-- Value format follows the user's lang. en_US: date `%d/%m/%Y`, datetime `%d/%m/%Y %H:%M:%S`
-  (e.g. `date '.o_field_widget[name="commitment_date"] input' 01/06/2026 18:00:00`). Stored UTC.
+**Date / datetime fields: write ISO, never click:**
+- `date <sel> <value>` fills WITHOUT clicking (the picker overlay isn't clickable), fires `change`,
+  closes an open picker, commits (blur) and READS THE FIELD BACK.
+- Write the value as ISO — `2026-12-15`, or `2026-12-15 18:00` for a datetime (user-local). The kit
+  reads the logged-in user's format from the page and converts (local en_US `MM/dd/yyyy`, SHG
+  staging and KACEE `dd/MM/yyyy`), so one flow runs on every server. A value already in the
+  server's format passes through.
+- If Odoo cannot parse a date it empties the field (14), flags it invalid, or — Odoo 17 — silently
+  puts the previous value back. All three are now a step error naming the server's format.
 
-**Selectors with spaces silently break `fill`/`date`/`mark`/`m2o`:**
-- These commands take `<selector> <value>`, so an unquoted selector with a space gets split and
-  the tail folds into the value. Wrap such selectors in `'single quotes'`. The tool now prints a
-  `WARNING: selector "…" looks unquoted and may be truncated` when it detects this.
-- Selector-only commands (`click`/`fclick`/`waitfor`/`bbox`/`find`/`evals`) take the whole rest of
-  the line, so spaces are fine there without quoting.
+**Selectors: quoting is optional everywhere (since 2026-11-23):**
+- Rest-of-line commands (`click`/`fclick`/`jclick`/`waitfor`/`find`/`evals`/`bbox`/`scroll`/`cols`/
+  `highlight`) drop one pair of wrapping quotes.
+- `<selector> <value>` commands (`fill`/`date`/`m2o`/`mark`/`celltype`/`boolcell`, `expect text|value`):
+  an unquoted selector ends where the page says it does — the kit tries the longer selector while
+  the next token looks like CSS and keeps it if it matches an element, printing a `NOTE:`. Value
+  text is never swallowed. If nothing matches yet, writing commands still refuse to guess.
+- `expect visible|hidden` take the whole rest of the line as the selector.
+- Quoting is still the explicit form and always wins.
+
+**Dialogs: a click on a label the page ALSO has is a destructive bet:**
+- With a dialog open, `clickbtn`/`clickrpc` only consider that dialog's controls, and every failed
+  step prints the open dialog (`open dialog: "Confirmation" — buttons: Ok | Cancel`).
+- But with NO dialog open, `clickbtn Cancel` is the record's own Cancel. On 2026-11-23 a test flow
+  ran `actionmenu Delete` → `clickbtn Cancel`; the Delete click had silently not registered on
+  Odoo 14, so the second line cancelled quotation S02739 on dv_kc_utd (restored by hand). Rules:
+  `expect dialog <title>` before clicking any dialog button whose label also exists on the page
+  (Cancel, Confirm, Delete, Ok), and run such flows with `strict on`.
+- `actionmenu` now fails (fatal) when the item it clicked is still showing — a click that did not
+  register can no longer read as success.
+
+**Other commands added 2026-11-23** (issues/2026-11-23-*.txt): `actionmenu [Print >] <item>` for the
+Action/gear and Print menus; `record <model> <name>` (exact name via name_search — avoids list rows
+that open inline edit, e.g. KS list manager on 14); `retype <text>` to replace the focused input's
+text (`type` appends, and now says so); `step [pass] <text>` / `step off` for a banner that
+survives reloads, never takes clicks and turns red at the failing command — use it instead of
+hand-built `pwStep()` evals.
 
 **navmenu works on Odoo 14/16/17 unchanged** — the app/section/dropdown selectors are unions across
 versions (v17 apps `.o_grid_apps_menu__button` opener + `a.o-app-menu-item`; sections
@@ -336,7 +361,7 @@ only a session is provided, task lookup is restricted to that exact ID. Missing
 context stays unassigned. A `--db` conflicting with URL `?db=` is an error.
 
 Use `expect visible|hidden|text|value <selector> [expected]`, `expect state <label>`,
-and `expect dialog <title>` to verify outcomes. Quote selectors containing spaces.
+and `expect dialog <title>` to verify outcomes. Selectors may be quoted or not.
 These retry within the action timeout and fail the run if the expected UI state
 is absent. Trace creation alone is not proof of success: inspect the exit code
 and `<label>.result.json`. See README for the result schema and context metadata.

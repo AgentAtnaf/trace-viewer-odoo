@@ -1,0 +1,16 @@
+Context: T26-08396 (Odoo 14 KACEE, stock.request.order / stock.picking, 11-16).
+
+What failed: on lists using the KS list-view manager, clicking a row enters INLINE EDIT
+instead of opening the record, so the flow never reached the form.
+
+Workaround: navigate by hash: location.hash = '#id=<id>&model=stock.picking&view_type=form',
+with the id fetched by a hand-written RPC.
+Suggested fix: let `record` take a name as well as an id —
+  record stock.picking WH/OUT/00012
+resolves the id with name_search (exactly one match required) and opens the form, so no
+list click is needed.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+`record <model> <name>` resolves the id with name_search (exactly one exact match, else lists
+matches or similar names) and opens the form by hash. Proven: tests/gap_fixes.js (mock RPC) and
+live 17 (S00005 -> #5) and 14 (S02739 -> #2657).

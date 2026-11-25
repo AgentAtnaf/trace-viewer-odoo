@@ -6,8 +6,8 @@
 # what silently rot when the dispatcher is edited.
 # __BASE__ and __DBQ__ (a ?db=... suffix, or empty) are substituted by the runner.
 
-# 1. wrapped-quote warning: click-family commands take the rest of the line RAW
-find 'input[name="login"]'
+# 1. a quoted selector on a rest-of-line command works (one pair of quotes is dropped)
+waitfor 'input[name="login"]'
 
 # 2. the correct unquoted form still works
 find input[name="login"]

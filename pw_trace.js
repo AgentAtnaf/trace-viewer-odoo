@@ -121,24 +121,57 @@ try {
     console.log(`  WARNING: ${msg}`);
   };
 
-  // Opposite mistake: click/fclick/jclick/waitfor/bbox/find/evals take the
-  // WHOLE REST OF THE LINE as the selector, unquoted, by design (so a raw CSS
-  // selector with quotes inside it, e.g. [name="x"], survives intact). Wrapping
-  // one of these in 'single quotes' the same way fill/m2o/date need for
-  // selectors with spaces makes the outer quotes literal characters in the
-  // selector, which then silently matches nothing ("-1 elements", no hint why).
-  // See issues/2026-08-06-quoted-click-selector.txt.
-  // A quoted selector here can never match anything — the quotes become literal
-  // characters in the CSS — so this is a hard error, not advice. It used to be a
-  // warning printed just above the TIMEOUT it caused, which read as two
-  // unrelated messages (see issues/2026-09-09-fresh-rma-flow-build-gotchas.txt).
-  const warnIfWrapped = (cmdName, sel) => {
-    if (sel.length >= 2 && sel[0] === "'" && sel[sel.length - 1] === "'") {
-      throw new Error(
-        `"${cmdName}" takes the whole rest of the line unquoted, so the outer quotes around ${sel} `
-        + `are literal characters in the selector and can never match. Remove them — quotes are only `
-        + `needed for fill/date/m2o/mark, whose selector is one token.`);
+  // click/fclick/jclick/waitfor/bbox/find/evals/scroll/cols/highlight take the
+  // WHOLE REST OF THE LINE as the selector (so a raw CSS selector with quotes
+  // inside it, e.g. [name="x"], survives intact). Wrapping one in 'single quotes'
+  // used to make the quotes literal characters that never match (issues
+  // 2026-08-06-quoted-click-selector, 2026-09-09-fresh-rma-flow-build-gotchas),
+  // then a hard error. Now one pair of wrapping quotes is simply removed.
+  //
+  // 2026-11-23: quoting is no longer a per-command rule to remember. It was the
+  // single most common reason a new flow failed (~10 runs in 7 flows between
+  // 10-09 and 11-11, see issues/2026-11-23-selector-quoting-differs-per-command.txt),
+  // so every selector now works quoted OR unquoted:
+  //   * rest-of-line commands drop one pair of wrapping quotes (unwrapRest);
+  //   * selector+value commands find where an unquoted selector ends
+  //     (splitSelector, below).
+  const unwrapRest = (s) => {
+    s = (s || '').trim();
+    return (s.length >= 2 && s[0] === "'" && s[s.length - 1] === "'") ? s.slice(1, -1) : s;
+  };
+
+  // A token that can only be the continuation of a CSS/Playwright selector, never
+  // ordinary value text: a tag name, a combinator, or something starting with
+  // . # [ : or carrying selector punctuation ([ ] ( ) = ").
+  const looksLikeSelPart = (t) => SEL_TAG_RE.test(t) || /^[.#\[:>~+*]/.test(t) || /[\[\]()="]/.test(t);
+
+  // Where does the selector end on `<cmd> <selector> <value...>`? Quoted: the
+  // quotes say so. Unquoted: start with the first token; while the joined
+  // selector is still syntactically incomplete, or the next token looks like
+  // more selector, try the longer selector and KEEP it if it matches an element
+  // on the page. Value text never gets swallowed unless it both looks like CSS
+  // and turns the selector into one that matches something.
+  const splitSelector = async (cmdName, parts, quoted, i = 1) => {
+    const first = parts[i];
+    if (first === undefined || quoted[i]) return { sel: first, rest: parts.slice(i + 1) };
+    const count = async (s) => { try { return await page.locator(s).count(); } catch { return -1; } };
+    let best = i, bestN = await count(first), j = i;
+    let n = bestN;
+    while (j + 1 < parts.length && (n < 0 || looksLikeSelPart(parts[j + 1]))) {
+      j++;
+      n = await count(parts.slice(i, j + 1).join(' '));
+      if (n > 0) { best = j; bestN = n; }
     }
+    const sel = parts.slice(i, best + 1).join(' ');
+    if (best > i) {
+      console.log(`  NOTE: unquoted selector read as '${sel}' (${bestN} match${bestN === 1 ? '' : 'es'}) — quote it to make that explicit`);
+    } else if (bestN <= 0 && i === 1) {
+      // Nothing matches yet, so the page cannot tell us where the selector ends.
+      // Writing commands must not guess (a truncated selector writes into the
+      // wrong element and still reports success); mark/expect just wait and fail.
+      warnIfTruncated(parts, quoted, cmdName);
+    }
+    return { sel, rest: parts.slice(best + 1) };
   };
 
   // Does an observed /web/ request plausibly belong to the button we just
@@ -176,15 +209,70 @@ try {
   // healthy button with invisible="state != 'x'" in its arch always renders
   // with that attribute still present. It carries no diagnostic meaning.
   // Use `clickrpc` (does an RPC actually fire?) to detect a dead button.
+  // ISO date → the user's own Odoo format, so one flow runs on servers whose
+  // lang formats differ (local en_US MM/DD/YYYY vs staging DD/MM/YYYY — typing
+  // the wrong one silently EMPTIED the field: issues/2026-11-23-date-format-
+  // depends-on-locale.txt). `fmt` is {date, datetime} in either Odoo 17 luxon
+  // tokens (MM/dd/yyyy HH:mm:ss) or Odoo 14 strftime (%m/%d/%Y %H:%M:%S).
+  // Returns null when the value is not ISO or the format is unknown, so a value
+  // already in the server's format passes through unchanged.
+  function isoToOdooDate(value, fmt) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(value || '').trim());
+    if (!m || !fmt) return null;
+    const [, Y, Mo, D, h, mi, s] = m;
+    const pattern = h !== undefined ? fmt.datetime : fmt.date;
+    if (!pattern) return null;
+    const H = h || '00', MI = mi || '00', S = s || '00';
+    const h12 = (Number(H) % 12) || 12, ampm = Number(H) < 12 ? 'AM' : 'PM';
+    const t = {
+      '%Y': Y, '%y': Y.slice(2), '%m': Mo, '%d': D, '%H': H, '%M': MI, '%S': S,
+      '%I': String(h12).padStart(2, '0'), '%p': ampm,
+      yyyy: Y, yy: Y.slice(2), MM: Mo, dd: D, HH: H, mm: MI, ss: S,
+      hh: String(h12).padStart(2, '0'), a: ampm,
+      M: String(Number(Mo)), d: String(Number(D)), H: String(Number(H)), h: String(h12),
+    };
+    return pattern.replace(/%[YymdHMSIp]|yyyy|yy|MM|dd|HH|mm|ss|hh|M|d|H|h|a/g, k => t[k]);
+  }
+
+  // The logged-in user's date formats, from the page itself: Odoo 17 keeps them
+  // in @web/core/l10n/localization, Odoo 14 in the lang parameters.
+  const readDateFormat = () => page.evaluate(() => {
+    try {
+      const mods = window.odoo && window.odoo.loader && window.odoo.loader.modules;
+      const mod = mods && (mods.get ? mods.get('@web/core/l10n/localization') : mods['@web/core/l10n/localization']);
+      const l = mod && mod.localization;
+      if (l && l.dateFormat) return { date: l.dateFormat, datetime: l.dateTimeFormat || `${l.dateFormat} ${l.timeFormat}` };
+    } catch (e) { /* not Odoo 17 */ }
+    try {
+      const p = window.odoo.__DEBUG__.services['web.core']._t.database.parameters;
+      if (p && p.date_format) return { date: p.date_format, datetime: `${p.date_format} ${p.time_format}` };
+    } catch (e) { /* not Odoo 14 */ }
+    return null;
+  }).catch(() => null);
+
   function clickButtonByLabel(w) {
     // Buttons + only-OPEN dropdown/cog-menu items. NOT every .dropdown-item in
     // the DOM (the apps-menu portal is always present and would flood the
     // candidates), and never the apps grid itself (that's navmenu's job).
-    const els = Array.from(document.querySelectorAll(
+    let els = Array.from(document.querySelectorAll(
       'button, a[role="button"], .btn, .o_statusbar_buttons button, ' +
       '.dropdown-menu.show .dropdown-item, .o-dropdown--menu.d-block .dropdown-item'))
       .filter(e => e.offsetParent !== null && !e.disabled && e.getAttribute('aria-disabled') !== 'true'
         && !e.closest('.o_menu_apps, .o_grid_apps_menu, .o-app-menu'));
+    // With a dialog open, only ITS controls count: a user cannot reach the form
+    // behind the backdrop, and `clickbtn Confirm` used to click the sale order's
+    // own Confirm behind a wizard (issues/2026-11-23-clickbtn-hits-button-behind-dialog.txt).
+    // Odoo keeps closed v14 modals in the DOM, so "open" means actually rendered.
+    const shown = m => m.getClientRects().length > 0 && getComputedStyle(m).display !== 'none'
+      && getComputedStyle(m).visibility !== 'hidden';
+    const dialogs = Array.from(document.querySelectorAll('.modal')).filter(shown);
+    const top = dialogs[dialogs.length - 1];
+    let dialogTitle = null;
+    if (top) {
+      els = els.filter(e => top.contains(e));
+      const t = top.querySelector('.modal-title');
+      dialogTitle = t ? t.textContent.trim().replace(/\s+/g, ' ').slice(0, 60) : '(untitled dialog)';
+    }
     const label = e => (e.textContent || '').trim().replace(/\s+/g, ' ');
     const txt = e => label(e).toLowerCase();
     const alt = e => ((e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')).trim().toLowerCase();
@@ -199,10 +287,10 @@ try {
     }
     if (!el) {
       const labels = [...new Set(els.map(e => label(e) || `[icon] ${alt(e)}` || `[name] ${nm(e)}`).filter(Boolean))].slice(0, 20);
-      return { ok: false, labels };
+      return { ok: false, labels, dialog: dialogTitle };
     }
     el.click();
-    return { ok: true, text: label(el).slice(0, 40), name: el.getAttribute('name') || '' };
+    return { ok: true, text: label(el).slice(0, 40), name: el.getAttribute('name') || '', dialog: dialogTitle };
   }
 
   // Shared dropdown-item matcher for `pick` and `m2o`: works for OWL
@@ -341,6 +429,41 @@ try {
   // Fail-fast default for all Playwright waits (click/fill/waitForSelector/…);
   // waitidle/login keep their own longer internal deadlines.
   page.setDefaultTimeout(actionTimeout);
+
+  // `step` banner: a "STEP 2/5 …" strip across the bottom of every screenshot
+  // and trace snapshot. Five flows hand-built one with an eval'd pwStep(), which
+  // a reload wiped along with the helper itself
+  // (issues/2026-11-23-no-step-banner-command.txt). The kit holds the text and
+  // redraws it after every document load; pointer-events:none so it can never
+  // swallow a click, and it turns red on the step that fails.
+  let banner = null;               // { text, kind: 'info' | 'pass' | 'fail' }
+  const drawBanner = () => page.evaluate((b) => {
+    let d = document.getElementById('pw-step');
+    if (!b) { if (d) d.remove(); return; }
+    if (!d) { d = document.createElement('div'); d.id = 'pw-step'; (document.body || document.documentElement).appendChild(d); }
+    const bg = b.kind === 'pass' ? '#15803d' : b.kind === 'fail' ? '#b91c1c' : '#1d4ed8';
+    d.style.cssText = 'position:fixed;bottom:0;left:50%;transform:translateX(-50%);z-index:2147483646;'
+      + 'max-width:92%;padding:8px 18px;border-radius:8px 8px 0 0;font:600 15px/1.35 sans-serif;color:#fff;'
+      + `pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.35);background:${bg}`;
+    d.textContent = b.text;
+  }, banner).catch(() => {});
+  page.on('domcontentloaded', () => { if (banner) drawBanner(); });
+
+  // Which dialog is open right now — printed with every failed step, because an
+  // unexpected dialog otherwise shows up only as "matched 0 elements" on the
+  // next selector (issues/2026-11-23-unexpected-dialog-not-reported.txt).
+  const openDialogInfo = () => Promise.race([
+    page.evaluate(() => {
+      const shown = m => m.getClientRects().length > 0 && getComputedStyle(m).display !== 'none';
+      const top = Array.from(document.querySelectorAll('.modal')).filter(shown).pop();
+      if (!top) return null;
+      const t = top.querySelector('.modal-title');
+      const buttons = Array.from(top.querySelectorAll('.modal-footer button, .modal-footer .btn, footer button'))
+        .filter(b => b.offsetParent !== null).map(b => b.textContent.trim().replace(/\s+/g, ' ')).filter(Boolean);
+      return { title: t ? t.textContent.trim().replace(/\s+/g, ' ').slice(0, 80) : '(untitled)', buttons };
+    }),
+    new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+  ]).catch(() => null);
 
   // Track in-flight document navigations (form POSTs, redirects) — these are NOT
   // XHR/fetch so the in-page counter can't see them, and waitidle would pass early
@@ -690,6 +813,8 @@ try {
     const cmd = parts[0];
     // rawRest used by eval/jclick to avoid quote-stripping JS code
     const rawRest = raw.slice(cmd.length + 1);
+    // selector for the rest-of-line commands, quoted or not (see unwrapRest)
+    const restSel = unwrapRest(rawRest);
 
     // Echo the command as it STARTS — flushed to the log file immediately, so a
     // killed/hung run shows exactly which command it was on.
@@ -779,40 +904,37 @@ try {
         }
 
       } else if (cmd === 'click') {
-        warnIfWrapped('click', rawRest);
-        await page.click(rawRest, { timeout: actionTimeout }).catch(async (e) => {
-          const count = await page.evaluate((s) => document.querySelectorAll(s).length, rawRest).catch(() => -1);
+        await page.click(restSel, { timeout: actionTimeout }).catch(async (e) => {
+          const count = await page.evaluate((s) => document.querySelectorAll(s).length, restSel).catch(() => -1);
           const hint = count === 0 ? 'selector matched 0 elements' : `selector matched ${count} element(s) but was not actionable`;
           throw new Error(`${e.message.split('\n')[0]} — ${hint}`);
         });
         await page.waitForLoadState('domcontentloaded').catch(() => {});
-        console.log(`  clicked: ${rawRest}`);
+        console.log(`  clicked: ${restSel}`);
 
       } else if (cmd === 'fclick') {
         // Force click — bypasses Playwright visibility/stability checks
         // Good for: SPA buttons that Playwright thinks aren't actionable
-        warnIfWrapped('fclick', rawRest);
-        await page.click(rawRest, { force: true, timeout: actionTimeout }).catch(async (e) => {
-          const count = await page.evaluate((s) => document.querySelectorAll(s).length, rawRest).catch(() => -1);
+        await page.click(restSel, { force: true, timeout: actionTimeout }).catch(async (e) => {
+          const count = await page.evaluate((s) => document.querySelectorAll(s).length, restSel).catch(() => -1);
           const hint = count === 0 ? 'selector matched 0 elements' : `selector matched ${count} element(s) but was not actionable`;
           throw new Error(`${e.message.split('\n')[0]} — ${hint}`);
         });
         await page.waitForLoadState('domcontentloaded').catch(() => {});
-        console.log(`  fclicked: ${rawRest}`);
+        console.log(`  fclicked: ${restSel}`);
 
       } else if (cmd === 'jclick') {
         // JS click — dispatches .click() directly on the DOM element
         // Good for: Odoo OWL2 action buttons in forms
-        warnIfWrapped('jclick', rawRest);
         const found = await page.evaluate((s) => {
           const el = document.querySelector(s);
           if (!el) return false;
           el.click();
           return true;
-        }, rawRest);
+        }, restSel);
         await page.waitForLoadState('domcontentloaded').catch(() => {});
-        if (!found) throw new Error(`jclick NOT FOUND: ${rawRest}`);
-        console.log(`  jclicked (found): ${rawRest}`);
+        if (!found) throw new Error(`jclick NOT FOUND: ${restSel}`);
+        console.log(`  jclicked (found): ${restSel}`);
 
       } else if (cmd === 'field') {
         if (parts.length < 3) throw new Error('Usage: field <name> <value>');
@@ -825,9 +947,8 @@ try {
         console.log(`  rowset ${parts[1]} ${parts[2]} ${parts[3]}: verified ${JSON.stringify(actual)}`);
 
       } else if (cmd === 'fill') {
-        warnIfTruncated(parts, quoted, cmd);
-        const sel = parts[1];
-        const text = parts.slice(2).join(' ');
+        const { sel, rest } = await splitSelector(cmd, parts, quoted);
+        const text = rest.join(' ');
         await page.fill(sel, text, { timeout: actionTimeout });
         // Read the value back. A "filled:" line has to be evidence, not a claim:
         // Playwright reports success as long as SOME element accepted the text,
@@ -854,13 +975,21 @@ try {
         // clickable — a `click` before fill eats a full timeout. Fill the value
         // directly (Playwright fill fires input+change), fire change again for
         // OWL, close the picker (Escape), and commit (blur). No click.
-        // Value format follows the user's lang (en_US on dv_sme:
-        //   date  → %d/%m/%Y            e.g. 01/06/2026
-        //   datetime → %d/%m/%Y %H:%M:%S e.g. 01/06/2026 18:00:00 (stored UTC)
-        // Usage: date '<selector>' <value>   (quote selectors with spaces!)
-        warnIfTruncated(parts, quoted, cmd);
-        const sel = parts[1];
-        const value = parts.slice(2).join(' ');
+        // Value: write ISO (2026-12-15, or 2026-12-15 18:00 for a datetime) and it
+        // is converted to the logged-in user's format, which differs by server
+        // (local en_US MM/DD/YYYY, staging DD/MM/YYYY). A value already in the
+        // server's format is passed through unchanged. Datetimes are user-local.
+        // Usage: date <selector> <value>
+        const { sel, rest } = await splitSelector(cmd, parts, quoted);
+        let value = rest.join(' ');
+        const fmt = await readDateFormat();
+        const converted = isoToOdooDate(value, fmt);
+        if (converted) {
+          console.log(`  date: ${value} → "${converted}" (this server's format: ${/\d\d:\d\d/.test(value) ? fmt.datetime : fmt.date})`);
+          value = converted;
+        } else if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+          console.log('  NOTE: could not read this server\'s date format; writing the ISO value as is');
+        }
         await page.fill(sel, value, { timeout: actionTimeout });
         await page.evaluate((s) => {
           const el = document.querySelector(s);
@@ -876,13 +1005,63 @@ try {
           '.o_datetime_picker, .o_date_picker, .bootstrap-datetimepicker-widget, .datepicker'));
         if (pickerOpen) await page.keyboard.press('Escape').catch(() => {});
         await page.evaluate((s) => { const el = document.querySelector(s); if (el) el.blur(); }, sel);
-        console.log(`  date: ${sel} = "${value}"${pickerOpen ? ' (closed open picker)' : ''}`);
+        // Read it back. A date in the wrong format is not rejected by the input —
+        // Odoo parses it on commit and leaves the field EMPTY (or flags it
+        // invalid), and the flow only found out several steps later.
+        await page.waitForTimeout(250);
+        const back = await page.evaluate((s) => {
+          const el = document.querySelector(s);
+          if (!el) return null;
+          const v = 'value' in el ? el.value : el.textContent;
+          return { value: (v || '').trim(),
+                   invalid: !!el.closest('.o_field_invalid, .o_invalid_field') || el.classList.contains('o_field_invalid') };
+        }, sel);
+        // Three ways Odoo rejects a date it cannot parse: it empties the field
+        // (seen on staging, 14), flags it invalid, or — Odoo 17 — silently puts
+        // the PREVIOUS value back. So compare the numbers too: "1/6/2026" and
+        // "01/06/2026" are the same date, "15/12/2026" vs "12/16/2026" is not.
+        const nums = s => (String(s).match(/\d+/g) || []).map(Number);
+        const sameDate = (a, b) => { const x = nums(a), y = nums(b), n = Math.max(3, Math.min(x.length, y.length));
+          return x.slice(0, n).join(',') === y.slice(0, n).join(','); };
+        const why = !back ? null
+          : !back.value ? 'is EMPTY'
+          : back.invalid ? `is flagged invalid ("${back.value}")`
+          : !sameDate(back.value, value) ? `shows "${back.value}" (Odoo kept or put back a different date)`
+          : null;
+        if (value && why) {
+          throw new Error(`date: wrote "${value}" into ${sel}, but after commit the field ${why} — Odoo did not accept it. `
+            + `This server's format is ${fmt ? `${fmt.date} (datetime ${fmt.datetime})` : 'unknown'}; `
+            + 'write the date as ISO YYYY-MM-DD and the kit converts it.');
+        }
+        console.log(`  date: ${sel} = "${back ? back.value : value}"${pickerOpen ? ' (closed open picker)' : ''}`);
 
-      } else if (cmd === 'type') {
-        // Type text into the currently-focused element via keyboard events (no selector needed)
+      } else if (cmd === 'type' || cmd === 'retype') {
+        // type   — keystrokes into the focused element, AFTER whatever it holds.
+        // retype — clear the focused input first, then type (replace, not append).
+        // `type` into an input that already had text silently produced
+        // "Product AProduct B" twice (issues/2026-11-23-type-appends-to-existing-text.txt),
+        // so it now says when it appended.
         const text = parts.slice(1).join(' ');
+        const readFocused = () => page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body) return null;
+          return 'value' in el ? String(el.value) : (el.isContentEditable ? el.textContent : null);
+        }).catch(() => null);
+        const replace = cmd !== 'type';   // retype
+        const before = await readFocused();
+        if (replace) {
+          await page.keyboard.press('Control+a');
+          await page.keyboard.press('Backspace');
+        }
         await page.keyboard.type(text, { delay: 50 });
-        console.log(`  typed: "${text}"`);
+        const after = await readFocused();
+        if (replace) {
+          console.log(`  retyped: "${text}"${before ? ` (replaced "${before}")` : ''}`);
+          if (after !== null && after !== text) console.log(`  NOTE: the input now reads "${after}"`);
+        } else {
+          console.log(`  typed: "${text}"`);
+          if (before) console.log(`  NOTE: the focused input already held "${before}" — appended, it now reads "${after}". Use \`retype\` to replace.`);
+        }
 
       } else if (cmd === 'm2o') {
         // Many2one field helper: click cell → clear any pre-filled value → type
@@ -896,9 +1075,8 @@ try {
         // already closes its own dropdown via a direct element click, so no
         // trailing `press Escape` is needed (or wanted) after m2o/pick — an
         // Escape here can instead close the whole enclosing modal.
-        const cellSel = parts[1];
-        const searchText = parts.slice(2).join(' ');
-        warnIfTruncated(parts, quoted, cmd);
+        const { sel: cellSel, rest } = await splitSelector(cmd, parts, quoted);
+        const searchText = rest.join(' ');
         await page.click(cellSel, { timeout: actionTimeout });
         await page.keyboard.press('Control+a');
         await page.keyboard.press('Backspace');
@@ -939,9 +1117,8 @@ try {
         // two-stage dance: JS-click the cell to enter edit, then focus the
         // cell's own input/textarea, then type into it.
         // Usage: celltype '<td selector>' <text>   (quote selectors with spaces)
-        warnIfTruncated(parts, quoted, cmd);
-        const cellSel = parts[1];
-        const text = parts.slice(2).join(' ');
+        const { sel: cellSel, rest } = await splitSelector(cmd, parts, quoted);
+        const text = rest.join(' ');
         const entered = await page.evaluate((s) => {
           const cell = document.querySelector(s);
           if (!cell) return { ok: false };
@@ -969,8 +1146,7 @@ try {
         // NOT stable across tables (e.g. the "Detailed Operations" popup differs
         // from the main Operations tab), so discover per-table instead of
         // reusing an index. Usage: cols [table selector]  (default: first list)
-        warnIfWrapped('cols', rawRest.trim());
-        const tableSel = rawRest.trim() || '.o_list_table, table.o_list_view, table';
+        const tableSel = restSel || '.o_list_table, table.o_list_view, table';
         const heads = await page.evaluate((sel) => {
           const t = document.querySelector(sel);
           if (!t) return null;
@@ -1076,6 +1252,16 @@ try {
       } else if (cmd === 'expect') {
         const kind = parts[1];
         let selector = parts[2], expected = parts.slice(3).join(' ');
+        if (kind === 'visible' || kind === 'hidden') {
+          // No expected value, so the whole rest of the line is the selector —
+          // `expect visible .o_form_view button[name="x"]` used to keep only the
+          // first token and fail on the wrong element.
+          selector = unwrapRest(rawRest.trim().slice(kind.length));
+          expected = '';
+        } else if (kind === 'text' || kind === 'value') {
+          const split = await splitSelector(cmd, parts, quoted, 2);
+          selector = split.sel; expected = split.rest.join(' ');
+        }
         if (kind === 'state') {
           expected = parts.slice(2).join(' ');
           selector = '.o_form_view .o_statusbar_status .o_arrow_button_current, .o_form_view .o_statusbar_status [aria-checked="true"]';
@@ -1140,9 +1326,8 @@ try {
         // own debug overlay before serializing snapshots). Use `mark`
         // instead if the annotation needs to survive in the trace viewer.
         // Usage: highlight <selector>
-        warnIfWrapped('highlight', rawRest);
-        await page.locator(rawRest).first().highlight();
-        console.log(`  highlighted: ${rawRest}`);
+        await page.locator(restSel).first().highlight();
+        console.log(`  highlighted: ${restSel}`);
 
       } else if (cmd === 'mark') {
         // Inject a REAL red box (+ optional caption) around an element —
@@ -1154,9 +1339,8 @@ try {
         // draw using the already-resolved coordinates.
         // Usage: mark <selector> [caption text]  (wrap selector in 'single
         // quotes' if it contains spaces, e.g. 'button:has-text("Log in")')
-        warnIfTruncated(parts, quoted, cmd);
-        const sel = parts[1];
-        const caption = parts.slice(2).join(' ');
+        const { sel, rest } = await splitSelector(cmd, parts, quoted);
+        const caption = rest.join(' ');
         const rect = await page.locator(sel).first().boundingBox().catch(() => null);
         if (!rect) {
           throw new Error(`  mark NOT FOUND: ${sel}`);
@@ -1201,8 +1385,7 @@ try {
         // coordinates to an external tool (e.g. Pillow) to draw a custom
         // circle/arrow annotation on the saved screenshot.
         // Usage: bbox <selector>
-        warnIfWrapped('bbox', rawRest);
-        const box = await page.locator(rawRest).first().boundingBox();
+        const box = await page.locator(restSel).first().boundingBox();
         console.log(`  bbox: ${JSON.stringify(box)}`);
 
       } else if (cmd === 'cookie') {
@@ -1245,9 +1428,9 @@ try {
         const wanted = rawRest.trim().toLowerCase();
         const result = await page.evaluate(clickButtonByLabel, wanted);
         if (result.ok) {
-          console.log(`  clickbtn: "${result.text}" (name="${result.name}")`);
+          console.log(`  clickbtn: "${result.text}" (name="${result.name}")${result.dialog ? ` in dialog "${result.dialog}"` : ''}`);
         } else {
-          console.log(`  clickbtn NOT FOUND: "${rawRest}" — visible clickable labels (use one of these, don't guess a name/id):`);
+          console.log(`  clickbtn NOT FOUND: "${rawRest}" — visible clickable labels${result.dialog ? ` in the open dialog "${result.dialog}" (only its buttons are reachable)` : ''} (use one of these, don't guess a name/id):`);
           (result.labels || []).forEach(l => console.log(`      · ${l}`));
           throw new Error(`${cmd} NOT FOUND: ${rawRest}; visible labels: ${(result.labels || []).join(' | ')}`);
         }
@@ -1270,7 +1453,7 @@ try {
         try {
           const result = await page.evaluate(clickButtonByLabel, wanted);
           if (!result.ok) {
-            console.log(`  clickrpc NOT FOUND: "${rawRest}" — visible clickable labels:`);
+            console.log(`  clickrpc NOT FOUND: "${rawRest}" — visible clickable labels${result.dialog ? ` in the open dialog "${result.dialog}"` : ''}:`);
             (result.labels || []).forEach(l => console.log(`      · ${l}`));
             throw new Error(`${cmd} NOT FOUND: ${rawRest}; visible labels: ${(result.labels || []).join(' | ')}`);
           } else {
@@ -1296,7 +1479,7 @@ try {
                 `clickrpc: clicked "${result.text}" (name="${btnName}") but its method never ` +
                 `reached the server within ${actionTimeout}ms.${obs}`);
             }
-            console.log(`  clickrpc: "${result.text}" (name="${btnName}") → ${matched} OK`);
+            console.log(`  clickrpc: "${result.text}" (name="${btnName}")${result.dialog ? ` in dialog "${result.dialog}"` : ''} → ${matched} OK`);
             await waitIdle();
           }
         } finally {
@@ -1305,8 +1488,7 @@ try {
 
       } else if (cmd === 'evals') {
         // Print outerHTML (first 300 chars) of each matched element — instant structure inspection
-        const sel = rawRest;
-        warnIfWrapped('evals', sel);
+        const sel = restSel;
         const results = await page.evaluate((s) => {
           return Array.from(document.querySelectorAll(s)).slice(0, 5).map(e =>
             e.outerHTML.slice(0, 300)
@@ -1316,8 +1498,7 @@ try {
         results.forEach((r, i) => console.log(`  [${i}] ${r}`));
 
       } else if (cmd === 'find') {
-        const sel = rawRest;
-        warnIfWrapped('find', sel);
+        const sel = restSel;
         const results = await page.evaluate((s) => {
           return Array.from(document.querySelectorAll(s)).slice(0, 5).map(e =>
             `${e.tagName}.${e.className.replace(/\s+/g, '.')} | text="${e.textContent?.trim().slice(0, 60)}"`
@@ -1327,8 +1508,7 @@ try {
         results.forEach(r => console.log(`  ${r}`));
 
       } else if (cmd === 'waitfor') {
-        const sel = rawRest;
-        warnIfWrapped('waitfor', sel);
+        const sel = restSel;
         await page.waitForSelector(sel, { timeout: actionTimeout });
         console.log(`  appeared: ${sel}`);
 
@@ -1338,26 +1518,54 @@ try {
         // still misses a lower group; the old workaround was to click a field
         // down there, which dirties it and is wrong for a read-only check.
         // Usage: scroll <selector>
-        warnIfWrapped('scroll', rawRest);
         const scrolled = await page.evaluate((sel) => {
           const el = document.querySelector(sel);
           if (!el) return false;
           el.scrollIntoView({ block: 'center', inline: 'nearest' });
           return true;
-        }, rawRest);
-        if (!scrolled) throw new Error(`scroll: ${rawRest} (NOT FOUND — 0 elements)`);
+        }, restSel);
+        if (!scrolled) throw new Error(`scroll: ${restSel} (NOT FOUND — 0 elements)`);
         await page.waitForTimeout(150); // let the scroll settle before any screenshot
-        console.log(`  scroll: ${rawRest}${scrolled ? '' : '  (NOT FOUND \u2014 0 elements)'}`);
+        console.log(`  scroll: ${restSel}${scrolled ? '' : '  (NOT FOUND \u2014 0 elements)'}`);
 
       } else if (cmd === 'record') {
         // Open a record's form directly by model + id. Some records have no menu
         // item at all (e.g. a picking with a custom operation type), and flows
         // were hand-writing the hash URL every time.
         // Usage: record <model> <id>
+        //        record <model> <name>   e.g. record stock.picking WH/OUT/00012
+        // By name: resolved with name_search, exactly one exact match required.
+        // Opening a record from a list is unreliable where the KS list-view
+        // manager makes a row click start INLINE EDIT instead (issues/
+        // 2026-11-23-ks-list-row-click-opens-inline-edit.txt).
         const rModel = parts[1];
-        const rId = parts[2];
+        let rId = parts[2];
+        const rName = parts.slice(2).join(' ');
+        if (rId && !/^\d+$/.test(rId)) {
+          const found = await page.evaluate(async ({ model, name }) => {
+            const call = async (operator) => {
+              const r = await fetch('/web/dataset/call_kw', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', method: 'call',
+                  params: { model, method: 'name_search', args: [], kwargs: { name, operator, limit: 8 } } }) });
+              const j = await r.json();
+              if (j.error) throw new Error((j.error.data && j.error.data.message) || j.error.message);
+              return j.result;
+            };
+            const exact = await call('=');
+            return exact.length ? { exact } : { exact, near: await call('ilike') };
+          }, { model: rModel, name: rName }).catch(e => ({ error: e.message }));
+          if (found.error) throw new Error(`record: name_search on ${rModel} failed: ${found.error}`);
+          if (found.exact.length !== 1) {
+            const list = (found.exact.length ? found.exact : found.near || []).map(([id, n]) => `${n} (#${id})`);
+            throw new Error(`record: ${found.exact.length || 'no'} ${rModel} named exactly "${rName}"`
+              + (list.length ? ` — ${found.exact.length ? 'matches' : 'similar'}: ${list.join(' | ')}. Use the id.` : ''));
+          }
+          rId = String(found.exact[0][0]);
+          console.log(`  record: "${rName}" is ${rModel} #${rId}`);
+        }
         if (!rModel || !rId) {
-          throw new Error('  record: usage is  record <model> <id>   e.g. record stock.picking 1234');
+          throw new Error('  record: usage is  record <model> <id|name>   e.g. record stock.picking 1234');
         } else {
           const origin = new URL(page.url()).origin;
           await page.goto(`${origin}/web#id=${rId}&model=${rModel}&view_type=form`, { timeout: 20000 });
@@ -1406,9 +1614,8 @@ try {
         // VERIFIES .checked actually changed (and says so if it didn't).
         // Usage: boolcell '<td selector>' [on|off]
         // See issues/2026-08-14-boolean-checkbox-click-in-editable-tree.txt.
-        warnIfTruncated(parts, quoted, cmd);
-        const bcSel = parts[1];
-        const want = (parts[2] || '').toLowerCase();   // '', 'on'/'true'/'1', 'off'/'false'/'0'
+        const { sel: bcSel, rest } = await splitSelector(cmd, parts, quoted);
+        const want = (rest[0] || '').toLowerCase();   // '', 'on'/'true'/'1', 'off'/'false'/'0'
         const target = ['on', 'true', '1', 'yes', 'check', 'checked'].includes(want) ? true
           : ['off', 'false', '0', 'no', 'uncheck', 'unchecked'].includes(want) ? false
           : null;                                       // null = just toggle
@@ -1443,6 +1650,97 @@ try {
           else console.log(`  boolcell: ${bcSel} ${r.before} \u2192 ${r.after}`);
         }
 
+      } else if (cmd === 'step') {
+        // Banner across the bottom of the page, kept through reloads, red when a
+        // later command fails. Usage: step <text> | step pass <text> | step off
+        const text = rawRest.trim();
+        if (/^off$/i.test(text)) {
+          banner = null;
+          await drawBanner();
+          console.log('  step banner cleared');
+        } else {
+          const pass = /^(pass|ok)\b/i.test(text);
+          const body = pass ? text.replace(/^(pass|ok)\b\s*/i, '') : text;
+          if (!body) throw new Error('Usage: step <text>  |  step pass <text>  |  step off');
+          banner = { kind: pass ? 'pass' : 'info', base: body, text: pass ? `✓ ${body}` : body };
+          await drawBanner();
+          console.log(`  step: ${banner.text}`);
+        }
+
+      } else if (cmd === 'actionmenu') {
+        // The control panel's Action (Odoo 14 button / Odoo 17 gear) and Print
+        // menus. Flows were opening them with hand-written evals whose first
+        // selector was too narrow (issues/2026-11-23-no-action-menu-command.txt).
+        // Usage: actionmenu <item>          e.g. actionmenu Duplicate
+        //        actionmenu Print > <item>  e.g. actionmenu Print > Delivery Slip
+        const segs = restSel.split('>').map(x => x.trim()).filter(Boolean);
+        const menu = segs.length > 1 ? segs[0].toLowerCase() : 'action';
+        const item = (segs.length > 1 ? segs.slice(1).join(' > ') : segs[0] || '').toLowerCase();
+        if (!item) throw new Error('Usage: actionmenu <item>   or   actionmenu Print > <item>');
+        const opened = await page.evaluate((menu) => {
+          const root = document.querySelector('.o_cp_action_menus');
+          if (!root) return { ok: false, why: 'this view has no Action/Print menus (.o_cp_action_menus is absent) — open a record, or select list rows first' };
+          const toggles = Array.from(root.querySelectorAll('button, .dropdown-toggle, .o_dropdown_toggler_btn'))
+            .filter(e => e.offsetParent !== null);
+          const sig = e => [e.textContent, e.getAttribute('title'), e.getAttribute('aria-label'), e.getAttribute('data-tooltip'),
+            e.className, ...Array.from(e.querySelectorAll('i, span')).map(i => i.className)].join(' ').toLowerCase();
+          const want = menu === 'print' ? /print/ : /action|fa-cog|oi-cog|gear/;
+          let t = toggles.find(e => want.test(sig(e)));
+          if (!t && menu !== 'print') t = toggles.find(e => !/print/.test(sig(e)));
+          if (!t) return { ok: false, why: `no "${menu}" menu here; toggles: ${toggles.map(e => e.textContent.trim() || e.getAttribute('title') || '[icon]').join(' | ') || '(none)'}` };
+          document.querySelectorAll('[data-pw-actionmenu]').forEach(e => e.removeAttribute('data-pw-actionmenu'));
+          t.setAttribute('data-pw-actionmenu', '1');
+          // Open it unless its items are actually showing (aria-expanded alone has
+          // been seen out of sync with what is on screen).
+          const box = t.closest('.o_dropdown, .dropdown, .btn-group, .o-dropdown');
+          const showing = !!box && Array.from(box.querySelectorAll('.dropdown-item, .o_menu_item')).some(e => e.offsetParent !== null);
+          if (t.getAttribute('aria-expanded') !== 'true' || (box && !showing && !document.querySelector('.o-dropdown--menu .dropdown-item'))) t.click();
+          return { ok: true, toggle: t.textContent.trim().replace(/\s+/g, ' ') || (menu === 'print' ? 'Print' : 'Action') };
+        }, menu);
+        if (!opened.ok) throw new Error(`actionmenu: ${opened.why}`);
+        let res = null;
+        const deadline = Date.now() + actionTimeout;
+        do {   // OWL renders the menu a tick after the click
+          res = await page.evaluate((w) => {
+            const norm = e => e.textContent.trim().replace(/\s+/g, ' ');
+            const visible = list => Array.from(list).filter(e => e.offsetParent !== null && norm(e));
+            // Items of the menu we just opened; Odoo 17 may render it outside
+            // the toggle's container, so fall back to any open dropdown.
+            const t = document.querySelector('[data-pw-actionmenu]');
+            const box = t && t.closest('.o_dropdown, .dropdown, .btn-group, .o-dropdown');
+            let items = box ? visible(box.querySelectorAll('.dropdown-item, .o_menu_item')) : [];
+            if (!items.length) items = visible(document.querySelectorAll(
+              '.o_cp_action_menus .dropdown-item, .o_cp_action_menus .o_menu_item, '
+              + '.o-dropdown--menu .dropdown-item, .dropdown-menu.show .dropdown-item'));
+            if (!items.length) return { ok: false, none: true };
+            // Odoo 14 renders <li class="o_menu_item"><a class="dropdown-item">Delete</a></li>
+            // and the handler is on the <a>: clicking the <li> does NOTHING and used
+            // to be reported as success. Keep only the innermost candidates.
+            items = items.filter(e => !items.some(o => o !== e && e.contains(o)));
+            const el = items.find(e => norm(e).toLowerCase() === w) || items.find(e => norm(e).toLowerCase().includes(w));
+            if (!el) return { ok: false, items: [...new Set(items.map(norm))].slice(0, 30) };
+            el.setAttribute('data-pw-actionitem', '1');
+            el.click();
+            return { ok: true, text: norm(el) };
+          }, item);
+          if (res.ok || !res.none) break;
+          await page.waitForTimeout(100);
+        } while (Date.now() < deadline);
+        if (!res.ok) throw new Error(`actionmenu: no "${item}" in the ${opened.toggle} menu — items: ${(res.items || []).join(' | ') || '(the menu did not open)'}`);
+        await waitIdle();
+        // Odoo closes the menu when an item is chosen. If the item we clicked is
+        // still showing, the click did not register — and every later step would
+        // run against a page where nothing happened (on 14 a dead "Delete" was
+        // followed by a clickbtn that hit the record's own Cancel button).
+        const stillOpen = await page.evaluate(() => {
+          const el = document.querySelector('[data-pw-actionitem]');
+          const open = !!(el && el.isConnected && el.offsetParent !== null);
+          if (el) el.removeAttribute('data-pw-actionitem');
+          return open;
+        });
+        if (stillOpen) throw Object.assign(new Error(`actionmenu: clicked "${res.text}" but the ${opened.toggle} menu is still open — the click did not register, nothing was done`), { fatal: true });
+        console.log(`  actionmenu: ${opened.toggle} > ${res.text}`);
+
       } else if (cmd === 'url') {
         console.log(`  ${page.url()}`);
 
@@ -1474,6 +1772,18 @@ try {
         console.error(`  TIMEOUT on ${cmd} ${tgt} (${actionTimeout}ms): ${msg}`);
       } else {
         console.error(`  ERROR [${cmd}]: ${msg}`);
+      }
+      if (msg !== '__HARD_TIMEOUT__') {
+        const dlg = await openDialogInfo();
+        if (dlg) {
+          console.error(`  open dialog: "${dlg.title}"${dlg.buttons.length ? ` — buttons: ${dlg.buttons.join(' | ')}` : ''}`);
+          step.dialog = dlg;
+        }
+      }
+      if (banner) {
+        const base = banner.base || banner.text;
+        banner = { kind: 'fail', base, text: `✗ ${base} — FAILED at line ${lineNumber}: ${cmd}` };
+        await drawBanner();
       }
       if (strict || e.fatal || ['login'].includes(cmd) || msg === '__HARD_TIMEOUT__') { console.error('  aborting flow after failure'); aborted = true; }
     } finally {

@@ -1,0 +1,20 @@
+Context: KC-CAPACITY-QUOTE-PICK-QTY-CONFIRM (Odoo 14, 10-19), T26-08396 (Odoo 14, 11-16);
+the same hand-written eval appears in other flows.
+
+What failed: there is no command for the control panel's Action / Print menus (Odoo 14
+"Action" button, Odoo 17 gear). Flows open them with a hand-written eval:
+  eval (function(){[...document.querySelectorAll('.o_cp_action_menus button')]
+        .find(b=>b.innerText.trim()==='Action').click(); ...})()
+and the first selector tried was too narrow in both flows ("Action-menu selector").
+
+Suggested fix: `actionmenu <item>` (and `actionmenu Print > <item>`): opens the menu for the
+running version, clicks the item by its label, lists the available items on a miss.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+`actionmenu <item>` / `actionmenu Print > <item>` added: opens the v14 Action button / v17
+gear, clicks the item by label, lists the items on a miss. Found live on Odoo 14: v14 wraps each
+item as <li class="o_menu_item"><a class="dropdown-item">; the first version clicked the <li>,
+which does nothing, and reported success. Fixed (innermost element only) and guarded: if the
+clicked item is still showing afterwards, the step fails as fatal.
+Proven: tests/gap_fixes.js (v14-shaped menu + a dead item) and live 17 + 14 (Delete opened the
+real confirmation on both).

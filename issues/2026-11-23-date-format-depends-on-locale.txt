@@ -1,0 +1,20 @@
+Context: Odoo 17, rebate-settlement-accrued-types (dv_ryt_uat, 10-14) and
+so-delivery-date-shg-staging (dev_shg staging, 11-09).
+
+What failed: `date '<sel>' 12/15/2026` silently EMPTIED the field on staging, whose en_US
+date format is DD/MM/YYYY (local DBs use MM/DD/YYYY). `date` logged success; the failure
+only showed later as a missing value. The same flow cannot run on both servers.
+
+Workaround: hand-edit the flow per server.
+Suggested fix: accept ISO dates (2026-12-15, 2026-12-15 18:00) and convert them to the
+user's own format read from the page (Odoo 17 localization / Odoo 14 lang parameters);
+then READ BACK the field and fail loudly if it is empty or flagged invalid, naming the
+format the server expects.
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+ISO values are converted to the logged-in user's format, read from the page (Odoo 17
+@web/core/l10n/localization, Odoo 14 web.core lang parameters); the field is read back and a
+date Odoo did not take is a step error naming the format. Three rejection shapes are caught:
+emptied (14/staging), flagged invalid, and — found live on Odoo 17 — the PREVIOUS value silently
+put back (compared by the numbers, so 1/6/2026 == 01/06/2026 still passes).
+Proven: unit tests for luxon + strftime; live 17 (MM/dd/yyyy) and live 14 KACEE (%d/%m/%Y).

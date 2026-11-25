@@ -183,7 +183,7 @@ done
 ```
 
 `expect visible|hidden|text|value <selector> [expected]` checks the selected element.
-Quote selectors containing spaces. Text comparisons normalize whitespace; input
+Selectors may be quoted or not (visible/hidden take the rest of the line). Text comparisons normalize whitespace; input
 values match exactly. Assertions retry until the action timeout. Visible/text/value
 checks require exactly one visible match, so ambiguous selectors fail.
 `expect state <label>` checks the current Odoo statusbar label;

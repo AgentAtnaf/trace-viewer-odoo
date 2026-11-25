@@ -1,0 +1,18 @@
+Context: KC-CAPACITY-QUOTE-PICK-QTY-CONFIRM (Odoo 14, 10-19).
+
+What failed: with a wizard open, `clickbtn Confirm` clicked the sale order's own Confirm
+button BEHIND the dialog (action_confirm_check_date) instead of the wizard's Confirm.
+clickButtonByLabel searches the whole document, and the form's header button comes first.
+
+Workaround: `click .modal-footer button[name="action_set_schedule_date"]`.
+Suggested fix: when a dialog is open, clickbtn/clickrpc only consider controls inside the
+topmost visible dialog (the backdrop blocks everything else for a real user anyway).
+
+## STATUS 2026-11-23 — FIXED in pw_trace.js
+clickButtonByLabel only considers controls inside the topmost visible .modal; output says
+`in dialog "<title>"`, and a miss lists only the dialog's labels. Proven live: Odoo 17 delete
+dialog ("No, keep it" found inside it; the quotation's own Cancel was refused) and Odoo 14
+("Cancel" clicked in "Confirmation", order stayed Quotation).
+NOTE: with NO dialog open, `clickbtn Cancel` is still the record's own Cancel. That cancelled
+S02739 on dv_kc_utd during testing (restored). Guidance added to CLAUDE.md: `expect dialog` before
+any dialog-button click whose label the page also has, and `strict on`.

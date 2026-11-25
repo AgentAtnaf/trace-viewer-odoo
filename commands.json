@@ -22,7 +22,7 @@
   {
     "name": "click",
     "usage": "click <sel>",
-    "description": "standard Playwright click (waits for visibility)"
+    "description": "standard Playwright click (waits for visibility); selector quoted or not"
   },
   {
     "name": "fclick",
@@ -37,7 +37,12 @@
   {
     "name": "clickbtn",
     "usage": "clickbtn <text>",
-    "description": "click button by visible label (prints internal name)"
+    "description": "click button by visible label (prints internal name); with a dialog open, only that dialog's controls"
+  },
+  {
+    "name": "actionmenu",
+    "usage": "actionmenu [Print >] <item>",
+    "description": "pick an item from the control panel Action (v14 button / v17 gear) or Print menu; lists the items on a miss"
   },
   {
     "name": "clickrpc",
@@ -62,17 +67,22 @@
   {
     "name": "fill",
     "usage": "fill <sel> <text>",
-    "description": "fill input (use single quotes for selectors with spaces)"
+    "description": "fill input and read the value back; selector quoted or not (an unquoted one ends where the page says it does)"
   },
   {
     "name": "date",
     "usage": "date <sel> <value>",
-    "description": "set a date/datetime field WITHOUT clicking (no 30s picker hang)"
+    "description": "set a date/datetime WITHOUT clicking; write ISO (2026-12-15 / 2026-12-15 18:00) and it is converted to this server's format, then read back (empty/invalid = error)"
   },
   {
     "name": "type",
     "usage": "type <text>",
-    "description": "type text into focused element (keyboard events, no selector)"
+    "description": "type into the focused element AFTER its current text (says so when it appended); use retype to replace"
+  },
+  {
+    "name": "retype",
+    "usage": "retype <text>",
+    "description": "clear the focused input, then type (replace, not append)"
   },
   {
     "name": "m2o",
@@ -101,8 +111,8 @@
   },
   {
     "name": "record",
-    "usage": "record <model> <id>",
-    "description": "open a record form directly by model + id (no menu needed)"
+    "usage": "record <model> <id|name>",
+    "description": "open a record form directly by model + id, or by exact name via name_search (no menu, no list click)"
   },
   {
     "name": "breadcrumb",
@@ -175,6 +185,11 @@
     "description": "inject a REAL red box+caption around an element (visible in trace viewer Snapshot tab)"
   },
   {
+    "name": "step",
+    "usage": "step [pass] <text> | step off",
+    "description": "banner across the bottom of every screenshot/snapshot; survives reloads, never blocks clicks, turns red at a failing command"
+  },
+  {
     "name": "unmark",
     "usage": "unmark",
     "description": "remove all marks added by `mark`"
@@ -212,7 +227,7 @@
   {
     "name": "expect",
     "usage": "expect <visible|hidden|text|value|state|dialog> <selector/value> [expected]",
-    "description": "assert a UI outcome"
+    "description": "assert a UI outcome; visible/hidden take the whole rest of the line as the selector"
   },
   {
     "name": "done",

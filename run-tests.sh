@@ -75,6 +75,13 @@ else
   bad "results/context integration tests"
 fi
 
+echo "=== 1e. the 2026-11-23 gap fixes (issues/2026-11-23-*.txt) ==="
+if node tests/gap_fixes.js > "$TMP/gaps.log" 2>&1; then
+  ok "quoting, date, retype, actionmenu, dialog scope, record by name, step banner"
+else
+  bad "gap fixes (see below)"; grep -E "expected|Error" "$TMP/gaps.log" | head -20
+fi
+
 echo
 echo "=== 2. browser smoke test (login page only) ==="
 if ! curl -sf -o /dev/null --max-time 5 "$BASE/web/login"; then
@@ -112,7 +119,7 @@ except Exception:
     fi
   }
   # --- always assertable: these do not depend on what the page contains ------
-  assert "wrapped-quote selector is warned about" "takes the whole rest of the line unquoted"
+  assert "quoted rest-of-line selector works"     'appeared: input[name="login"]'
   assert "scroll hits an element"                 'scroll: input[name="login"]'
   assert "scroll reports a miss"                  "scroll: .no_such_element_at_all"
   assert "breadcrumb with no crumbs is graceful"  "breadcrumb: no clickable crumbs found"
